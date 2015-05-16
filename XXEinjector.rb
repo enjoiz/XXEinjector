@@ -186,8 +186,6 @@ def sendreq()
 	end
 
 	# sending request
-	puts "proxy: " + $proxy
-	puts "proxy port: " + $proxy_port
 	request = Net::HTTP.new($remote, $port, $proxy, $proxy_port)
 	if $verbose == "y"
 		puts "Sending request with malicious XML:"
