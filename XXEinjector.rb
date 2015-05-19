@@ -127,10 +127,16 @@ else
 end
 
 # EXECUTION
-ftp = TCPServer.new ftp_port
 http = TCPServer.new http_port
-gopher = TCPServer.new gopher_port
-jar = TCPServer.new jar_port
+if enum == "ftp"
+	ftp = TCPServer.new ftp_port
+end
+if enum == "gopher"
+	gopher = TCPServer.new gopher_port
+end
+if upload == "y"
+	jar = TCPServer.new jar_port
+end
 
 # regex to find directory listings
 regex = /^[$.\-_~ 0-9A-Za-z]+$/
