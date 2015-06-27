@@ -28,6 +28,7 @@ Options:<br />
 
   --urlencode	URL encode injected DTD. This is default for URI.<br />
   --nodtd	If you want to put DTD in request by yourself. Specify "--dtd" to show how DTD should look like.<br />
+  --output Output file for bruteforcing and logger mode. By default it logs to brute.log in current directory. (--output=/tmp/out.txt)<br />
   --timeout	Timeout for receiving file/directory content. (--timeout=20)<br />
   --fast	Skip asking what to enumerate. Prone to false-positives.<br />
   --verbose	Show verbose messages.<br />
