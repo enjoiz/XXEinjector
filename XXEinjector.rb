@@ -634,7 +634,8 @@ loop do
 				else
 					log = File.open(output, "a")
 					log.write param + "\n"
-					puts "Bruteforced request logged: #{param}" if $verbose == "y"
+					puts "Next results:\n#{param}\n" if logger == "y" || $verbose == "y"
+					print "> " if logger == "y"
 					log.close
 				end	
 
@@ -746,7 +747,8 @@ if enum == "ftp"
 			else
 				log = File.open(output, "a")
 				log.write req
-				puts "Bruteforced request logged: #{req}" if $verbose == "y"
+				puts "Next results:\n#{param}\n" if logger == "y" || $verbose == "y"
+				print "> " if logger == "y"
 				log.close
 			end	
 
@@ -845,7 +847,8 @@ if enum == "gopher"
 				else
 					log = File.open(output, "a")
 					log.write param + "\n"
-					puts "Bruteforced request logged: #{param}" if $verbose == "y"
+					puts "Next results:\n#{param}\n" if logger == "y" || $verbose == "y"
+					print "> " if logger == "y"
 					log.close
 				end
 		
