@@ -12,7 +12,7 @@ require 'readline'
 host = "" # our external ip
 path = "" # path to enumerate
 $file = "" # file with vulnerable HTTP request
-enum = "ftp" # which out of band protocol should be used for file retrieval - ftp/http
+enum = "ftp" # which out of band protocol should be used for file retrieval - ftp/http/gopher
 logger = "n" # only log requests, do not send anything
 
 $proto = "http" # protocol to use - http/https
