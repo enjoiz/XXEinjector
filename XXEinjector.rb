@@ -747,7 +747,7 @@ if enum == "ftp"
 			else
 				log = File.open(output, "a")
 				log.write req
-				puts "Next results:\n#{param}\n" if logger == "y" || $verbose == "y"
+				puts "Next results:\n#{req}\n" if logger == "y" || $verbose == "y"
 				print "> " if logger == "y"
 				log.close
 			end	
