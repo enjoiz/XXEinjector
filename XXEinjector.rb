@@ -178,8 +178,9 @@ filenames = Array.new
 nextpath = ""
 enumpath = ""
 $directpath = ""
-# array that contains skipped paths
+# array that contains skipped and allowed paths
 blacklist = Array.new
+whitelist = Array.new
 # other variables
 $port = 0 # remote host application port - fill if HTTP/1.0 is used
 $remote = "" # remote host URL/IP address - fill if HTTP/1.0 is used
@@ -610,6 +611,7 @@ loop do
 					end
 					logpath += "#{tmppath}"
 					logpath = logpath.gsub('\\','/')
+					logpath[0] = "" if logpath[0] == "/"
 					if tmppath != ""
 						FileUtils.mkdir_p $remote + "/" + logpath.split("/")[0..-2].join('/')
 					else
@@ -628,7 +630,11 @@ loop do
 							done = 1
 						end
 					end
-					log = File.open($remote + "/" + "#{logpath}.log", "a")
+					if logpath == ""
+						log = File.open($remote + "/" + "rootdir.log", "a")
+					else
+						log = File.open($remote + "/" + "#{logpath}.log", "a")
+					end
 					log.write param + "\n"
 					log.close
 				else
@@ -723,6 +729,7 @@ if enum == "ftp"
 				end
 				logpath += "#{tmppath}"
 				logpath = logpath.gsub('\\','/')
+				logpath[0] = "" if logpath[0] == "/"
 				if tmppath != ""
 					FileUtils.mkdir_p $remote + "/" + logpath.split("/")[0..-2].join('/')
 				else
@@ -741,7 +748,11 @@ if enum == "ftp"
 						done = 1
 					end
 				end
-				log = File.open($remote + "/" + "#{logpath}.log", "a")
+				if logpath == ""
+					log = File.open($remote + "/" + "rootdir.log", "a")
+				else
+					log = File.open($remote + "/" + "#{logpath}.log", "a")
+				end
 				log.write req
 				log.close
 			else
@@ -823,6 +834,7 @@ if enum == "gopher"
 					end
 					logpath += "#{tmppath}"
 					logpath = logpath.gsub('\\','/')
+					logpath[0] = "" if logpath[0] == "/"
 					if tmppath != ""
 						FileUtils.mkdir_p $remote + "/" + logpath.split("/")[0..-2].join('/')
 					else
@@ -841,7 +853,11 @@ if enum == "gopher"
 							done = 1
 						end
 					end
-					log = File.open($remote + "/" + "#{logpath}.log", "a")
+					if logpath == ""
+						log = File.open($remote + "/" + "rootdir.log", "a")
+					else
+						log = File.open($remote + "/" + "#{logpath}.log", "a")
+					end
 					log.write param + "\n"
 					log.close
 				else
@@ -863,7 +879,7 @@ if enum == "gopher"
 								logp += "\\"
 							end
 						end
-							logp += param
+						logp += param
 						filenames.push(logp)
 						puts "Path pushed to array: #{logp}" if $verbose == "y"
 					end
@@ -1034,7 +1050,11 @@ if brute == ""
 							done = 1
 						end
 					end
-					log = File.open($remote + "/" + "#{logpath}.log", "a")
+					if logpath == ""
+						log = File.open($remote + "/" + "rootdir.log", "a")
+					else
+						log = File.open($remote + "/" + "#{logpath}.log", "a")
+					end
 					log.write param + "\n"
 					log.close
 					
@@ -1083,14 +1103,14 @@ loop do
 			else
 				check = "#{path}\\#{line}".split("\\")[0..-2].join('\\')
 			end
-			if enumall != "y" && !blacklist.include?(check)
+			if enumall != "y" && !blacklist.include?(check) && !whitelist.include?(check)
 				if cut == 0
-					puts "Enumerate #{path}\\#{line} ? Y[yes]/n[no]/s[skip all files in this directory]"
+					puts "Enumerate #{path}\\#{line} ? Y[yes]/n[no]/s[skip all files in this directory]/a[enum all files in this directory]"
 				else
 					if path == ""
-						puts "Enumerate /#{line} ? Y[yes]/n[no]/s[skip all files in this directory]"
+						puts "Enumerate /#{line} ? Y[yes]/n[no]/s[skip all files in this directory]/a[enum all files in this directory]"
 					else
-						puts "Enumerate /#{path}/#{line} ? Y[yes]/n[no]/s[skip all files in this directory]"
+						puts "Enumerate /#{path}/#{line} ? Y[yes]/n[no]/s[skip all files in this directory]/a[enum all files in this directory]"
 					end
 				end
 				cmp = Readline.readline("> ", true)
@@ -1103,13 +1123,21 @@ loop do
 						blacklist.push("#{path}/#{line}".split("/")[0..-2].join('/'))
 					end
 				end
-			elsif	enumall == "y"
+				if cmp == "a" || cmp == "A"
+					if cut == 0
+						whitelist.push("#{path}\\#{line}".split("\\")[0..-2].join('\\'))
+					
+					else
+						whitelist.push("#{path}/#{line}".split("/")[0..-2].join('/'))
+					end
+				end
+			elsif	enumall == "y" || whitelist.include?(check)
 				cmp = "y"
 			else 
 				cmp = "n"
 			end
 			if cmp == "y" || cmp == "Y" || cmp == ""
-				if enumall != "y"
+				if enumall != "y" && !whitelist.include?(check)
 					switch = 1
 					puts "Enumeration locked." if $verbose == "y"
 				end
@@ -1123,6 +1151,7 @@ loop do
 					else
 						enumpath = "#{path}/#{line}"
 					end
+					enumpath[0] = "" if enumpath[0] == "/"
 					sendreq()
 				else
 					if $direct != ""
@@ -1160,7 +1189,17 @@ loop do
 
 								# log to separate file
 								logpath = "#{path}"
+								if nextpath != ""
+									if cut == 1
+										logpath += "/"
+									else
+										logpath += "\\"
+									end
+								end
+								logpath += "#{nextpath}"
 								logpath = logpath.gsub('\\','/')
+								logpath[0] = "" if logpath[0] == "/"
+
 								if logpath.include?("/")
 									FileUtils.mkdir_p $remote + "/" + logpath.split("/")[0..-2].join('/')
 								else
@@ -1168,6 +1207,7 @@ loop do
 								end
 								if  done == 0
 									if cut == 1
+										
 										puts "Successfully logged file: /#{logpath}"
 										done = 1
 									else
@@ -1175,15 +1215,28 @@ loop do
 										done = 1
 									end
 								end
-								log = File.open($remote + "/" + "#{logpath}.log", "a")
+								if logpath == ""
+									log = File.open($remote + "/" + "rootdir.log", "a")
+								else
+									log = File.open($remote + "/" + "#{logpath}.log", "a")
+								end
 								log.write param + "\n"
 								log.close
 					
 								# push to array if directory listing is detected for further enumeration
 								param = param.chomp
 								if param.match regex
-									filenames.push(param)
-									puts "Path pushed to array: #{param}" if $verbose == "y"
+									logp = nextpath
+									if nextpath != ""
+										if cut == 1
+											logp += "/"
+										else
+											logp += "\\"
+										end
+									end
+									logp += param
+									filenames.push(logp)
+									puts "Path pushed to array: #{logp}" if $verbose == "y"
 								end
 
 							end
