@@ -1126,9 +1126,11 @@ loop do
 				if cmp == "a" || cmp == "A"
 					if cut == 0
 						whitelist.push("#{path}\\#{line}".split("\\")[0..-2].join('\\'))
+						cmp = "y"
 					
 					else
 						whitelist.push("#{path}/#{line}".split("/")[0..-2].join('/'))
+						cmp = "y"
 					end
 				end
 			elsif	enumall == "y" || whitelist.include?(check)
