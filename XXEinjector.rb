@@ -595,7 +595,11 @@ loop do
 				exit(1)
 			end
 
-			req.split("%0A").each do |param|
+			# set proper splitter
+			splitter = "%0A"
+			splitter = "\n" if phpfilter == "y"
+
+			req.split(splitter).each do |param|
 
 				param = URI.decode(param)
 
@@ -776,7 +780,16 @@ if enum == "ftp"
 			end
 			if req.include? "EPSV"
 				req = ""
-			end	
+			end
+			if req == "TYPE A"
+				req = ""
+			end
+			if req == "LIST"
+				req = ""
+			end
+			if req.include?("CWD ")
+				req = ""
+			end
 
 			# push to array if directory listing is detected for further enumeration
 			if brute == ""
@@ -1061,8 +1074,10 @@ if brute == ""
 					# push to array if directory listing is detected for further enumeration
 					param = param.chomp
 					if param.match regex
-						filenames.push(param)
-						puts "Path pushed to array: #{param}" if $verbose == "y"
+						if not param.include?("CWD ")
+							filenames.push(param)
+							puts "Path pushed to array: #{param}" if $verbose == "y"
+						end
 					end
 
 				end
@@ -1228,17 +1243,19 @@ loop do
 								# push to array if directory listing is detected for further enumeration
 								param = param.chomp
 								if param.match regex
-									logp = nextpath
-									if nextpath != ""
-										if cut == 1
-											logp += "/"
-										else
-											logp += "\\"
+									if not param.include?("CWD ")
+										logp = nextpath
+										if nextpath != ""
+											if cut == 1
+												logp += "/"
+											else
+												logp += "\\"
+											end
 										end
+										logp += param
+										filenames.push(logp)
+										puts "Path pushed to array: #{logp}" if $verbose == "y"
 									end
-									logp += param
-									filenames.push(logp)
-									puts "Path pushed to array: #{logp}" if $verbose == "y"
 								end
 
 							end
