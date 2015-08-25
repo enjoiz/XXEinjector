@@ -1074,10 +1074,8 @@ if brute == ""
 					# push to array if directory listing is detected for further enumeration
 					param = param.chomp
 					if param.match regex
-						if not param.include?("CWD ")
-							filenames.push(param)
-							puts "Path pushed to array: #{param}" if $verbose == "y"
-						end
+						filenames.push(param)
+						puts "Path pushed to array: #{param}" if $verbose == "y"
 					end
 
 				end
@@ -1243,19 +1241,17 @@ loop do
 								# push to array if directory listing is detected for further enumeration
 								param = param.chomp
 								if param.match regex
-									if not param.include?("CWD ")
-										logp = nextpath
-										if nextpath != ""
-											if cut == 1
-												logp += "/"
-											else
-												logp += "\\"
-											end
+									logp = nextpath
+									if nextpath != ""
+										if cut == 1
+											logp += "/"
+										else
+											logp += "\\"
 										end
-										logp += param
-										filenames.push(logp)
-										puts "Path pushed to array: #{logp}" if $verbose == "y"
 									end
+									logp += param
+									filenames.push(logp)
+									puts "Path pushed to array: #{logp}" if $verbose == "y"
 								end
 
 							end
