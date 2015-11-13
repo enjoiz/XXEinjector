@@ -4,9 +4,13 @@ XXEinjector automates retrieving files using direct and out of band methods. Dir
 
 Options:<br />
   --host	Mandatory - our IP address for reverse connections. (--host=192.168.0.2)<br />
-  --file	Mandatory - File containing valid HTTP request with xml. You can also mark with "XXEINJECT" a point where DTD should be injected. (--file=/tmp/req.txt)<br />
+  --file	Mandatory - file containing valid HTTP request with xml. You can also mark with "XXEINJECT" a point where DTD should be injected. (--file=/tmp/req.txt)<br />
   --path	Mandatory if enumerating directories - Path to enumerate. (--path=/etc)<br />
   --brute	Mandatory if bruteforcing files - File with paths to bruteforce. (--brute=/tmp/brute.txt)<br />
+  --logger	Log results only. Do not send requests. HTTP logger looks for "p" parameter with results.<br />
+  
+  --rhost	Remote host's IP address or domain name. Use this argument only for requests without Host header. (--rhost=192.168.0.3)<br />
+  --rport	Remote host's TCP port. Use this argument only for requests without Host header and for non-default values. (--rport=8080)<br />
 
   --oob		Out of Band exploitation method. FTP is default. FTP can be used in any application. HTTP can be used for bruteforcing and enumeration through directory listing in Java < 1.7 applications. Gopher can only be used in Java < 1.7 applications. (--oob=http/ftp/gopher)<br />
   --direct  Use direct exploitation instead of out of band. Unique mark should be specified as a value for this argument. This mark specifies where results of XXE start and end. Specify --xml to see how XML in request file should look like. (--direct=UNIQUEMARK)<br />
@@ -32,6 +36,7 @@ Options:<br />
   --nodtd	If you want to put DTD in request by yourself. Specify "--dtd" to show how DTD should look like.<br />
   --output Output file for bruteforcing and logger mode. By default it logs to brute.log in current directory. (--output=/tmp/out.txt)<br />
   --timeout	Timeout for receiving file/directory content. (--timeout=20)<br />
+  --contimeout	Timeout for closing connection with server. This is used to prevent DoS condition. (--contimeout=20)<br />
   --fast	Skip asking what to enumerate. Prone to false-positives.<br />
   --verbose	Show verbose messages.<br />
 
