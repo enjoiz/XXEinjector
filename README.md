@@ -13,7 +13,7 @@ Options:<br />
   --rport	Remote host's TCP port. Use this argument only for requests without Host header and for non-default values. (--rport=8080)<br />
 
   --oob		Out of Band exploitation method. FTP is default. FTP can be used in any application. HTTP can be used for bruteforcing and enumeration through directory listing in Java < 1.7 applications. Gopher can only be used in Java < 1.7 applications. (--oob=http/ftp/gopher)<br />
-  --direct    Use direct exploitation instead of out of band. Unique mark should be specified as a value for this argument. This mark specifies where results of XXE start and end. Specify --xml to see how XML in request file should look like. (--direct=UNIQUEMARK)<br />
+  --direct      Use direct exploitation instead of out of band. Unique mark should be specified as a value for this argument. This mark specifies where results of XXE start and end. Specify --xml to see how XML in request file should look like. (--direct=UNIQUEMARK)<br />
   --2ndfile	File containing valid HTTP request used in second order exploitation. (--2ndfile=/tmp/2ndreq.txt)<br />
   --phpfilter	Use PHP filter to base64 encode target file before sending.<br />
   --netdoc      Use netdoc protocol instead of file (Java).<br />
@@ -34,7 +34,7 @@ Options:<br />
 
   --urlencode	URL encode injected DTD. This is default for URI.<br />
   --nodtd	If you want to put DTD in request by yourself. Specify "--dtd" to show how DTD should look like.<br />
-  --output  Output file for bruteforcing and logger mode. By default it logs to brute.log in current directory. (--output=/tmp/out.txt)<br />
+  --output    Output file for bruteforcing and logger mode. By default it logs to brute.log in current directory. (--output=/tmp/out.txt)<br />
   --timeout	Timeout for receiving file/directory content. (--timeout=20)<br />
   --contimeout	Timeout for closing connection with server. This is used to prevent DoS condition. (--contimeout=20)<br />
   --fast	Skip asking what to enumerate. Prone to false-positives.<br />
