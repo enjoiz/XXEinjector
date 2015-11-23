@@ -32,7 +32,7 @@ Options:<br />
   --jarport	Set custom port for uploading files using jar. (--jarport=1337)<br />
   --xsltport	Set custom port for XSLT injection test. (--xsltport=1337)<br />
 
-  --test	This mode shows request with injected payload and quits. Used to verify correctness of request without sending it to a server.<br />
+  --test  This mode shows request with injected payload and quits. Used to verify correctness of request without sending it to a server.<br />
   --urlencode	URL encode injected DTD. This is default for URI.<br />
   --nodtd	If you want to put DTD in request by yourself. Specify "--dtd" to show how DTD should look like.<br />
   --output	Output file for bruteforcing and logger mode. By default it logs to brute.log in current directory. (--output=/tmp/out.txt)<br />
