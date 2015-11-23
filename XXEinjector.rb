@@ -32,6 +32,7 @@ upload = "" # upload this file into temp directory using Java jar schema
 expect = "" # command that gets executed using PHP expect
 $xslt = "n" # tests for XSLT
 
+$test = false # test mode, shows only payload
 $dtdi = "y" # if yes then DTD is injected automatically
 $rproto = "file" # file or netdoc protocol to retrieve data
 output = "brute.log" # output file for brute and logger modes
@@ -83,6 +84,7 @@ ARGV.each do |arg|
 	$contimeout = Integer(arg.split("=")[1]) if arg.include?("--contimeout=")
 	$port = Integer(arg.split("=")[1]) if arg.include?("--rport=")
 	$remote = arg.split("=")[1] if arg.include?("--rhost=")
+	$test = true if arg.include?("--test")
 end
 
 # show DTD to inject
@@ -143,6 +145,7 @@ if ARGV.nil? || (ARGV.size < 3 && logger == "n") || (host == "" && $direct == ""
 	puts "  --jarport	Set custom port for uploading files using jar. (--jarport=1337)"
 	puts "  --xsltport	Set custom port for XSLT injection test. (--xsltport=1337)"
 	puts ""
+	puts "  --test	This mode shows request with injected payload and quits. Used to verify correctness of request without sending it to a server."
 	puts "  --urlencode	URL encode injected DTD. This is default for URI."
 	puts "  --nodtd	If you want to put DTD in request by yourself. Specify \"--dtd\" to show how DTD should look like."
 	puts "  --output	Output file for bruteforcing and logger mode. By default it logs to brute.log in current directory. (--output=/tmp/out.txt)"
@@ -513,6 +516,22 @@ end
 
 # Sending request
 def sendreq()
+
+	if $test == true
+		puts "URL:"
+		if $proto == "http"
+			puts "http://#{$remote}:#{$port}#{$uri}"
+		else
+			puts "https://#{$remote}:#{$port}#{$uri}"
+		end
+		puts "\nHeaders:"
+		puts $headers
+		if $method == "post"
+			puts "\nPOST body:"
+			puts $post
+		end
+		exit(1)
+	end
 	
 	if $verbose == "y"
 		puts "Sending request with malicious XML:"
@@ -532,7 +551,7 @@ def sendreq()
 	else
 		puts "Sending request with malicious XML."
 	end
-	
+
 	$response = ""
 	$request.start { |r|
 		begin
