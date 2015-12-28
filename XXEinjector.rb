@@ -221,17 +221,15 @@ if path[0] == "/"
 	cut = 1
 end
 
-# Remove slash at the end if unix-like path specified
-if path[-1] == "/"
+# Remove slash at the end if not Windows drive
+if path[-1] == "/" && path[-2] != ":"
 	path[-1] = ''
 end
 
-# Remove backslash at the end if Windows system
-if path[-2..-1] == "\\\\"
-	path[-2..-1] = ''
-end
-if path[-1] == "\\"
-	path[-1] = ''
+# Add some changes to Windows path
+if cut == 0
+	path += '/' if path[-1] == ":"
+	path = path.gsub("\\", "/")
 end
 
 ### Processing Request File ###
@@ -734,16 +732,13 @@ loop do
 				# log to separate file or output file if in bruteforce mode
 				if brute == ""
 					logpath = "#{path}"
-					if tmppath != ""
-						if cut == 1
-							logpath += "/"
-						else
-							logpath += "\\"
-						end
+					if tmppath != "" && logpath[-1] != "/"
+						logpath += "/"
 					end
 					logpath += "#{tmppath}"
 					logpath = logpath.gsub('\\','/')
 					logpath[0] = "" if logpath[0] == "/"
+					logpath[-1] = "" if logpath[-1] == "/"
 					if tmppath != ""
 						FileUtils.mkdir_p $remote + "/" + logpath.split("/")[0..-2].join('/')
 					else
@@ -756,11 +751,14 @@ loop do
 					if  done == 0
 						if cut == 1
 							puts "Successfully logged file: /#{logpath}"
-							done = 1
 						else
-							puts "Successfully logged file: #{logpath}"
-							done = 1
+							if logpath[-1] == ":"
+								puts "Successfully logged file: #{logpath}/"
+							else
+								puts "Successfully logged file: #{logpath}"
+							end
 						end
+						done = 1
 					end
 					if logpath == ""
 						log = File.open($remote + "/" + "rootdir.log", "a")
@@ -783,11 +781,7 @@ loop do
 					if param.match regex
 						logp = tmppath
 						if tmppath != ""
-							if cut == 1
-								logp += "/"
-							else
-								logp += "\\"
-							end
+							logp += "/"
 						end
 						logp += param
 						filenames.push(logp)
@@ -853,16 +847,13 @@ if enum == "ftp"
 				if brute == ""
 					logpath = ""
 					logpath += "#{path}"
-					if tmppath != ""
-						if cut == 1
-							logpath += "/"
-						else
-							logpath += "\\"
-						end
+					if tmppath != "" && logpath[-1] != "/"
+						logpath += "/"
 					end
 					logpath += "#{tmppath}"
 					logpath = logpath.gsub('\\','/')
 					logpath[0] = "" if logpath[0] == "/"
+					logpath[-1] = "" if logpath[-1] == "/"
 					if tmppath != ""
 						FileUtils.mkdir_p $remote + "/" + logpath.split("/")[0..-2].join('/')
 					else
@@ -875,11 +866,14 @@ if enum == "ftp"
 					if  done == 0
 						if cut == 1
 							puts "Successfully logged file: /#{logpath}"
-							done = 1
 						else
-							puts "Successfully logged file: #{logpath}"
-							done = 1
+							if logpath[-1] == ":"
+								puts "Successfully logged file: #{logpath}/"
+							else
+								puts "Successfully logged file: #{logpath}"
+							end
 						end
+						done = 1
 					end
 					if logpath == ""
 						log = File.open($remote + "/" + "rootdir.log", "a")
@@ -925,11 +919,7 @@ if enum == "ftp"
 					if req.match regex
 						logp = tmppath
 						if tmppath != ""
-							if cut == 1
-								logp += "/"
-							else
-								logp += "\\"
-							end
+							logp += "/"
 						end
 						logp += req
 						filenames.push(logp)
@@ -973,16 +963,13 @@ if enum == "gopher"
 					if brute == ""
 						logpath = ""
 						logpath += "#{path}"
-						if tmppath != ""
-							if cut == 1
-								logpath += "/"
-							else
-								logpath += "\\"
-							end
+						if tmppath != "" && logpath[-1] != "/"
+							logpath += "/"
 						end
 						logpath += "#{tmppath}"
 						logpath = logpath.gsub('\\','/')
 						logpath[0] = "" if logpath[0] == "/"
+						logpath[-1] = "" if logpath[-1] == "/"
 						if tmppath != ""
 							FileUtils.mkdir_p $remote + "/" + logpath.split("/")[0..-2].join('/')
 						else
@@ -995,11 +982,14 @@ if enum == "gopher"
 						if  done == 0
 							if cut == 1
 								puts "Successfully logged file: /#{logpath}"
-								done = 1
 							else
-								puts "Successfully logged file: #{logpath}"
-								done = 1
+								if logpath[-1] == ":"
+									puts "Successfully logged file: #{logpath}/"
+								else
+									puts "Successfully logged file: #{logpath}"
+								end
 							end
+							done = 1
 						end
 						if logpath == ""
 							log = File.open($remote + "/" + "rootdir.log", "a")
@@ -1021,11 +1011,7 @@ if enum == "gopher"
 						if param.match regex
 							logp = tmppath
 							if tmppath != ""
-								if cut == 1
-									logp += "/"
-								else
-									logp += "\\"
-								end
+								logp += "/"
 							end
 							logp += param
 							filenames.push(logp)
@@ -1209,11 +1195,14 @@ if brute == ""
 					if  done == 0
 						if cut == 1
 							puts "Successfully logged file: /#{logpath}"
-							done = 1
 						else
-							puts "Successfully logged file: #{logpath}"
-							done = 1
+							if logpath[-1] == ":"
+								puts "Successfully logged file: #{logpath}/"
+							else
+								puts "Successfully logged file: #{logpath}"
+							end
 						end
+						done = 1
 					end
 					if logpath == ""
 						log = File.open($remote + "/" + "rootdir.log", "a")
@@ -1263,14 +1252,15 @@ loop do
 			line = line.gsub(' ','%20')
 		
 			# Check if a file should be enumerated
-			if cut == 1
-				check = "#{path}/#{line}".split("/")[0..-2].join('/')
-			else
-				check = "#{path}\\#{line}".split("\\")[0..-2].join('\\')
-			end
+			check = "#{path}/#{line}".split("/")[0..-2].join('/')
+
 			if enumall != "y" && !blacklist.include?(check) && !whitelist.include?(check)
 				if cut == 0
-					puts "Enumerate #{path}\\#{line} ? Y[yes]/n[no]/s[skip all files in this directory]/a[enum all files in this directory]"
+					if path[-1] == "/"
+						puts "Enumerate #{path}#{line} ? Y[yes]/n[no]/s[skip all files in this directory]/a[enum all files in this directory]"
+					else
+						puts "Enumerate #{path}/#{line} ? Y[yes]/n[no]/s[skip all files in this directory]/a[enum all files in this directory]"
+					end
 				else
 					if path == ""
 						puts "Enumerate /#{line} ? Y[yes]/n[no]/s[skip all files in this directory]/a[enum all files in this directory]"
@@ -1281,22 +1271,11 @@ loop do
 				cmp = Readline.readline("> ", true)
 				Readline::HISTORY.push
 				if cmp == "s" || cmp == "S"
-					if cut == 0
-						blacklist.push("#{path}\\#{line}".split("\\")[0..-2].join('\\'))
-					
-					else
-						blacklist.push("#{path}/#{line}".split("/")[0..-2].join('/'))
-					end
+					blacklist.push("#{path}/#{line}".split("/")[0..-2].join('/'))
 				end
 				if cmp == "a" || cmp == "A"
-					if cut == 0
-						whitelist.push("#{path}\\#{line}".split("\\")[0..-2].join('\\'))
-						cmp = "y"
-					
-					else
-						whitelist.push("#{path}/#{line}".split("/")[0..-2].join('/'))
-						cmp = "y"
-					end
+					whitelist.push("#{path}/#{line}".split("/")[0..-2].join('/'))
+					cmp = "y"
 				end
 			elsif	enumall == "y" || whitelist.include?(check)
 				cmp = "y"
@@ -1311,26 +1290,23 @@ loop do
 				nextpath = "#{line}"
 	
 				# Send request with next filename
-				if cut == 1
-					if $direct != ""
+				if $direct != ""
+					if path[-1] != "/"
 						$directpath = "#{path}/#{line}"
-						configreq()
 					else
-						enumpath = "#{path}/#{line}"
+						$directpath = "#{path}#{line}"
 					end
-					enumpath[0] = "" if enumpath[0] == "/"
-					sendreq()
-					send2ndreq() if $secfile != ""
+					configreq()
 				else
-					if $direct != ""
-						$directpath = "#{path}\\#{line}"
-						configreq()
+					if path[-1] != "/"
+						enumpath = "#{path}/#{line}"
 					else
-						enumpath = "#{path}\\#{line}"
+						enumpath = "#{path}#{line}"
 					end
-					sendreq()
-					send2ndreq() if $secfile != ""					
 				end
+				enumpath[0] = "" if enumpath[0] == "/"
+				sendreq()
+				send2ndreq() if $secfile != ""
 
 				# Loop that checks if response with next file content was received by FTP/HTTP servers
 				if $direct == ""
@@ -1358,12 +1334,8 @@ loop do
 
 								# log to separate file
 								logpath = "#{path}"
-								if nextpath != ""
-									if cut == 1
-										logpath += "/"
-									else
-										logpath += "\\"
-									end
+								if nextpath != "" && logpath[-1] != "/"
+									logpath += "/"
 								end
 								logpath += "#{nextpath}"
 								logpath = logpath.gsub('\\','/')
@@ -1376,13 +1348,15 @@ loop do
 								end
 								if  done == 0
 									if cut == 1
-										
 										puts "Successfully logged file: /#{logpath}"
-										done = 1
 									else
-										puts "Successfully logged file: #{logpath}"
-										done = 1
+										if logpath[-1] == ":"
+											puts "Successfully logged file: #{logpath}/"
+										else
+											puts "Successfully logged file: #{logpath}"
+										end
 									end
+									done = 1
 								end
 								if logpath == ""
 									log = File.open($remote + "/" + "rootdir.log", "a")
@@ -1397,11 +1371,7 @@ loop do
 								if param.match regex
 									logp = nextpath
 									if nextpath != ""
-										if cut == 1
-											logp += "/"
-										else
-											logp += "\\"
-										end
+										logp += "/"
 									end
 									logp += param
 									filenames.push(logp)
@@ -1437,14 +1407,12 @@ loop do
 			line[0] = ''
 			cut = 1
 		end
-		if line[-1] == "/"
+		line = line.gsub("\\","/")
+		if line[-1] == "/" && line[-2] != ":"
 			line[-1] = ''
 		end
-		if line[-2..-1] == "\\\\"
-			line[-2..-1] = ''
-		end
-		if line[-1] == "\\"
-			line[-1] = ''
+		if line[-1] == ":"
+			line += '/'
 		end
 
 		line = line.gsub(' ','%20')
