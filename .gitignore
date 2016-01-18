@@ -1,0 +1,4 @@
+*.txt
+*.log
+Logs/
+requests/
